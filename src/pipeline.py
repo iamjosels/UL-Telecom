@@ -26,6 +26,11 @@ def ejecutar_pasos(pasos: list[Paso], emitir: Emisor = None) -> dict[str, Result
     """Ejecuta una lista de pasos en orden. `ejecutar()` ya audita y emite los
     eventos de tool; aquí sólo se añade el evento de encabezado del paso."""
     for paso in pasos:
+        # Se pidió detener: se corta aquí en vez de anunciar pasos que ya no se
+        # van a ejecutar. `ejecutar()` los rechazaría igual, pero el tablero
+        # vería encenderse tres agentes para nada.
+        if registro.cancelacion_pedida():
+            break
         if emitir:
             emitir(
                 {

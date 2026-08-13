@@ -14,6 +14,7 @@ import { TablaAnomalias, VistaHallazgos } from "./components/VistaHallazgos";
 
 import {
   correrCierre,
+  detenerCierre,
   ErrorApi,
   getEstadoDatos,
   getKpis,
@@ -37,7 +38,10 @@ export default function App() {
   const [vista, setVista] = useState<VistaId>("cierre");
   const [estadoDatos, setEstadoDatos] = useState<EstadoDatos | undefined>();
   const [panelDatos, setPanelDatos] = useState(false);
+  const [deteniendo, setDeteniendo] = useState(false);
   const abortar = useRef<AbortController | null>(null);
+  /** El usuario pidió parar. Evita que la cadena de reserva relance el cierre. */
+  const pidioParar = useRef(false);
 
   const corriendo = estado.fase === "corriendo";
   const arco = useArco(estado.etapa, true);
@@ -127,6 +131,8 @@ export default function App() {
 
     setNota(undefined);
     setVista("cierre");
+    setDeteniendo(false);
+    pidioParar.current = false;
     arco.soltar();
     despachar({ tipo: "arranca" });
 
@@ -149,6 +155,9 @@ export default function App() {
         despachar({ tipo: "falla", mensaje: "Ya hay un cierre corriendo. Espera a que termine." });
         return;
       }
+
+      // Se pidió parar: repetir sin LLM sería justo lo contrario de lo pedido.
+      if (pidioParar.current) return;
 
       if (!modoSeguro) {
         setNota("El camino con agentes falló. Repitiendo sin LLM, con las mismas cifras.");
@@ -176,8 +185,33 @@ export default function App() {
       }
     } finally {
       abortar.current = null;
+      setDeteniendo(false);
     }
   }, [corriendo, modoSeguro, arco]);
+
+  /**
+   * Detener el cierre en curso.
+   *
+   * No se corta el stream por nuestro lado: se le pide al backend que pare y se
+   * espera su evento `cancelado`. Cortar aquí dejaría el hilo del servidor
+   * trabajando con el candado tomado, y el siguiente intento devolvería 409
+   * durante un minuto largo. La parada llega en el siguiente paso o llamada al
+   * modelo, que en la práctica son unos segundos.
+   */
+  const detener = useCallback(async () => {
+    if (!corriendo || deteniendo) return;
+    setDeteniendo(true);
+    pidioParar.current = true;
+    try {
+      await detenerCierre();
+    } catch {
+      // Si ni la petición de parada llega, el backend no está. Ahí sí se corta
+      // por nuestro lado: es preferible devolverle el control al usuario.
+      abortar.current?.abort();
+      despachar({ tipo: "falla", mensaje: "Se perdió la conexión con el backend." });
+      setDeteniendo(false);
+    }
+  }, [corriendo, deteniendo]);
 
   // Al terminar se refrescan KPIs y detalle, que es lo que alimenta los gráficos.
   useEffect(() => {
@@ -202,8 +236,11 @@ export default function App() {
         modo={estado.modo}
         modoSeguro={modoSeguro}
         datosDemo={estadoDatos?.es_demo ?? true}
+        deteniendo={deteniendo}
+        detenido={estado.fase === "detenido"}
         onModoSeguro={setModoSeguro}
         onCerrarCiclo={cerrarCiclo}
+        onDetener={detener}
         onAbrirDatos={() => setPanelDatos(true)}
       />
 

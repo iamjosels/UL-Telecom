@@ -124,6 +124,11 @@ def _consolidar_con_supervisor(salidas: list[str], emitir: Emisor = None) -> str
                 audit.registrar_agente("SUPERVISOR", "consolidacion", texto[:500],
                                        modelo=etiqueta)
                 return texto
+        except registro.CorridaCancelada:
+            # Se pidió detener durante la consolidación. No es que el supervisor
+            # no pudiera: es que se le mandó parar. Sube sin disfrazarse de
+            # degradación, igual que en el worker del crew.
+            raise
         except Exception as e:  # noqa: BLE001
             ultimo = e
 
@@ -324,6 +329,13 @@ def ejecutar_cierre(
     hilo = threading.Thread(target=_worker, name="crew-sonia", daemon=True)
     hilo.start()
     hilo.join(TIMEOUT_CREW_S)
+
+    # Se pidió detener. Esta función tiene una red de seguridad que completa de
+    # forma determinista lo que el crew no hizo, y aquí hay que desactivarla:
+    # rellenar los pasos que faltan es exactamente lo contrario de lo que pidió
+    # el usuario, y anunciarlo como "el crew falló" es además falso.
+    if registro.cancelacion_pedida():
+        raise registro.CorridaCancelada("cierre detenido por el usuario")
 
     colgado = hilo.is_alive()
     fallo = colgado or "error" in caja

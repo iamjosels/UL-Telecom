@@ -33,6 +33,7 @@ import time
 
 from crewai import LLM, Agent
 
+from src.tools import registro
 from src.tools.crew_adapters import tools_de
 
 _LOG = logging.getLogger("sonia.agents")
@@ -96,6 +97,12 @@ class LLMGroq(LLM):
         """
         ultimo: Exception | None = None
         for intento in range(REINTENTOS):
+            # Aquí se va el tiempo de un cierre con agentes, así que este es el
+            # punto que decide cuánto tarda en obedecer un "detener". Se mira
+            # también dentro del bucle: si la cancelación llega mientras se
+            # espera un reintento por límite de tokens, no se vuelve a llamar.
+            if registro.cancelacion_pedida():
+                raise registro.CorridaCancelada("cierre detenido por el usuario")
             try:
                 return super().call(*args, **kwargs)
             except Exception as e:  # noqa: BLE001

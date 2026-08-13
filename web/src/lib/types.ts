@@ -216,6 +216,12 @@ export interface EvError extends Base {
   mensaje: string;
 }
 
+/** El cierre paró porque se pidió. No es un fallo: lo ya calculado vale. */
+export interface EvCancelado extends Base {
+  tipo: "cancelado";
+  mensaje: string;
+}
+
 /** Terminal. No trae `tipo`: hay que despachar por el nombre del evento SSE. */
 export interface EvFin {
   tipo: "fin";
@@ -233,6 +239,7 @@ export type EventoRun =
   | EvCorridaFin
   | EvReporteFinal
   | EvError
+  | EvCancelado
   | EvFin;
 
 // --------------------------------------------------------------------------

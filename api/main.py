@@ -382,6 +382,9 @@ async def run(peticion: PeticionRun, request: Request):
 
     def worker() -> None:
         with _corrida_en_curso:
+            # Una cancelación de la corrida anterior mataría esta nada más
+            # empezar. Se limpia aquí, dentro del candado, no en el endpoint.
+            registro.reiniciar_cancelacion()
             try:
                 if peticion.deterministico or not os.getenv("GROQ_API_KEY"):
                     from src.pipeline import ejecutar_plan
@@ -397,6 +400,12 @@ async def run(peticion: PeticionRun, request: Request):
                         emitir=emitir, objetivo=peticion.objetivo,
                         fecha_corte=peticion.fecha_corte,
                     )
+                if registro.cancelacion_pedida():
+                    # Se detuvo a mitad. NO se emite reporte_final: ese evento
+                    # significa "el cierre cuadra", y aquí faltan pasos. Lo que
+                    # ya se calculó sigue en el registro y en el tablero.
+                    emitir({"tipo": "cancelado", "mensaje": "Cierre detenido."})
+                    return
                 emitir(
                     {
                         "tipo": "reporte_final",
@@ -412,8 +421,16 @@ async def run(peticion: PeticionRun, request: Request):
                         "narrativa": salida.get("narrativa"),
                     }
                 )
+            except registro.CorridaCancelada:
+                # Salió por el punto del LLM. Es lo pedido, no un fallo.
+                emitir({"tipo": "cancelado", "mensaje": "Cierre detenido."})
             except BaseException as e:  # noqa: BLE001
-                emitir({"tipo": "error", "mensaje": f"{type(e).__name__}: {e}"})
+                # Una cancelación puede llegar envuelta por CrewAI o LiteLLM,
+                # que capturan y reempaquetan lo que lanza una herramienta.
+                if registro.cancelacion_pedida():
+                    emitir({"tipo": "cancelado", "mensaje": "Cierre detenido."})
+                else:
+                    emitir({"tipo": "error", "mensaje": f"{type(e).__name__}: {e}"})
             finally:
                 # El evento "fin" lo emite el centinela al final del generador,
                 # así el cliente recibe exactamente uno.
@@ -448,6 +465,20 @@ async def run(peticion: PeticionRun, request: Request):
             registro.desuscribir(emitir)
 
     return EventSourceResponse(generador(), ping=15000)
+
+
+@app.post("/run/detener")
+def detener() -> dict:
+    """Pide que el cierre en curso pare.
+
+    No mata nada: marca la bandera y el worker sale en el siguiente punto de
+    control, que es la próxima herramienta o la próxima llamada al modelo. Por
+    eso responde 202 y no 200: está aceptado, no consumado.
+    """
+    if not _corrida_en_curso.locked():
+        return {"ts": ahora(), "detenido": False, "motivo": "no hay ningún cierre en curso"}
+    registro.pedir_cancelacion()
+    return {"ts": ahora(), "detenido": True}
 
 
 @app.get("/plan")

@@ -54,6 +54,43 @@ _SUSCRIPTORES: list[Callable[[dict], None]] = []
 _LOCK = threading.RLock()
 
 
+# --------------------------------------------------------------------------- #
+# Cancelación del cierre
+# --------------------------------------------------------------------------- #
+#
+# El cierre corre en un hilo y a un hilo de Python no se le puede dar muerte
+# desde fuera. Cerrar la conexión del navegador tampoco sirve: el worker
+# seguiría trabajando y el candado de corrida quedaría tomado, así que el
+# reintento devolvería 409 durante un minuto largo.
+#
+# La salida es cooperativa: una bandera que se consulta en los dos puntos por
+# los que pasa TODO el trabajo, `ejecutar()` para las herramientas y
+# `LLMGroq.call` para el modelo. La parada no es instantánea, sino en el
+# siguiente de esos puntos, que es lo máximo que se puede prometer sin mentir.
+
+
+class CorridaCancelada(Exception):
+    """Se pidió detener el cierre. Es control de flujo, no un fallo del sistema."""
+
+
+_CANCELAR = threading.Event()
+
+
+def pedir_cancelacion() -> None:
+    """Marca el cierre en curso para que se detenga en el siguiente punto."""
+    _CANCELAR.set()
+
+
+def reiniciar_cancelacion() -> None:
+    """Limpia la bandera. Imprescindible al ARRANCAR cada corrida: si no, una
+    cancelación vieja mataría la siguiente nada más empezar."""
+    _CANCELAR.clear()
+
+
+def cancelacion_pedida() -> bool:
+    return _CANCELAR.is_set()
+
+
 class SinArgumentos(BaseModel):
     """Schema para tools sin parámetros.
 
@@ -226,6 +263,19 @@ def ejecutar(nombre: str, origen: str = "sistema", **kwargs: Any) -> ResultadoTo
     origen:
         Quién la invoca, para la auditoría: un agente, "AGENTE_CHAT", "sistema".
     """
+    # Se detuvo el cierre. Se devuelve un resultado no-ok en vez de lanzar,
+    # porque el contrato de esta función es no lanzar nunca y porque así los
+    # pasos que queden se resuelven en microsegundos en lugar de trabajar.
+    if _CANCELAR.is_set():
+        return ResultadoTool(
+            tool=nombre,
+            agente=origen,
+            resumen="Cierre detenido antes de ejecutar este paso.",
+            params=dict(kwargs),
+            ok=False,
+            error="cancelado",
+        )
+
     with _LOCK:
         espec = _ESPECS.get(nombre)
         fn = _FUNCIONES.get(nombre)

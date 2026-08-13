@@ -57,7 +57,10 @@ export interface LineaAudit {
 export type Etapa = 0 | 1 | 2;
 
 export interface EstadoCorrida {
-  fase: "inactivo" | "corriendo" | "terminado" | "fallido";
+  /** "detenido" no es "fallido": el cierre paró porque se lo pidieron y lo que
+   *  alcanzó a calcularse sigue siendo válido. Mezclarlos pintaría de rojo un
+   *  tablero cuyas cifras están bien. */
+  fase: "inactivo" | "corriendo" | "terminado" | "fallido" | "detenido";
   modo?: Modo;
   runId?: string;
   pasos: PasoCorrida[];
@@ -297,10 +300,40 @@ function aplicarEvento(estado: EstadoCorrida, ev: EventoRun): EstadoCorrida {
     case "error":
       return { ...estado, fase: "fallido", error: ev.mensaje };
 
+    case "cancelado": {
+      // El aviso se ajusta a lo que de verdad quedó calculado. Decir siempre
+      // "lo calculado sigue en pantalla" sería falso cuando se detiene antes de
+      // que termine el primer paso, que es justo el caso más probable.
+      const hechos = estado.pasos.filter((p) => p.estado === "ok").length;
+      const aviso =
+        hechos > 0
+          ? `Cierre detenido tras ${hechos} de ${estado.pasos.length} pasos. Esas cifras son ` +
+            "válidas; el resto quedó sin correr."
+          : "Cierre detenido antes de que terminara ningún paso. Las cifras de portada siguen " +
+            "siendo las reales: se calculan aparte del cierre.";
+
+      // Los pasos que quedaron en "corriendo" no van a terminar nunca: se
+      // devuelven a pendiente para que ninguna columna quede latiendo.
+      return {
+        ...estado,
+        fase: "detenido",
+        pasos: estado.pasos.map((p) =>
+          p.estado === "corriendo" ? { ...p, estado: "pendiente" } : p,
+        ),
+        avisos: [...estado.avisos, aviso],
+      };
+    }
+
     case "fin":
       // Único evento terminal. corrida_fin llega antes de reporte_final, y
       // error tampoco cierra el stream.
-      return { ...estado, fase: estado.fase === "fallido" ? "fallido" : "terminado" };
+      return {
+        ...estado,
+        fase:
+          estado.fase === "fallido" || estado.fase === "detenido"
+            ? estado.fase
+            : "terminado",
+      };
 
     default:
       return estado;

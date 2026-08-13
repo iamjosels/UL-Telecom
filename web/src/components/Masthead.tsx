@@ -10,8 +10,13 @@ interface Props {
   modoSeguro: boolean;
   /** false cuando el corte cargado no es el dataset de ejemplo. */
   datosDemo?: boolean;
+  /** Ya se pidió parar y aún no llegó el evento de cancelación. */
+  deteniendo: boolean;
+  /** El último cierre paró porque se pidió, no porque terminara. */
+  detenido?: boolean;
   onModoSeguro: (v: boolean) => void;
   onCerrarCiclo: () => void;
+  onDetener: () => void;
   onAbrirDatos: () => void;
 }
 
@@ -29,8 +34,11 @@ export function Masthead({
   modo,
   modoSeguro,
   datosDemo = true,
+  deteniendo,
+  detenido = false,
   onModoSeguro,
   onCerrarCiclo,
+  onDetener,
   onAbrirDatos,
 }: Props) {
   return (
@@ -49,7 +57,13 @@ export function Masthead({
       </div>
 
       <div className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-2">
-        <Estado conectado={conectado} corriendo={corriendo} modo={modo} llm={llmConfigurado} />
+        <Estado
+          conectado={conectado}
+          corriendo={corriendo}
+          detenido={detenido}
+          modo={modo}
+          llm={llmConfigurado}
+        />
 
         {/* El corte es también la puerta a los datos: es lo que identifica al
             dataset cargado, así que es donde se va a buscar para cambiarlo. */}
@@ -79,13 +93,32 @@ export function Masthead({
           titulo="Corre el cierre sin LLM. Mismas cifras, un segundo, sin depender de la red."
         />
 
-        <button
-          onClick={onCerrarCiclo}
-          disabled={corriendo || !conectado}
-          className="group relative overflow-hidden border border-[var(--color-ambar)]/45 bg-[var(--color-ambar)]/10 px-4 py-1.5 text-[13px] font-medium text-[var(--color-ambar)] transition-colors duration-200 hover:bg-[var(--color-ambar)]/18 disabled:cursor-not-allowed disabled:border-[var(--filete)] disabled:bg-transparent disabled:text-[var(--color-tinta-3)]"
-        >
-          {corriendo ? "Cerrando…" : "Cerrar ciclo del mes"}
-        </button>
+        {/* Mientras corre, el par se lee como un solo control: qué está
+            pasando a la izquierda y cómo pararlo a la derecha. */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onCerrarCiclo}
+            disabled={corriendo || !conectado}
+            className="group relative overflow-hidden border border-[var(--color-ambar)]/45 bg-[var(--color-ambar)]/10 px-4 py-1.5 text-[13px] font-medium text-[var(--color-ambar)] transition-colors duration-200 hover:bg-[var(--color-ambar)]/18 disabled:cursor-not-allowed disabled:border-[var(--filete)] disabled:bg-transparent disabled:text-[var(--color-tinta-3)]"
+          >
+            {corriendo ? "Cerrando…" : "Cerrar ciclo del mes"}
+          </button>
+
+          {corriendo && (
+            <button
+              onClick={onDetener}
+              disabled={deteniendo}
+              title="El cierre para en el siguiente paso o llamada al modelo, no al instante."
+              className="anim-entra border px-3 py-1.5 text-[13px] transition-colors duration-200 disabled:cursor-not-allowed"
+              style={{
+                borderColor: deteniendo ? "var(--filete)" : "rgb(196 85 61 / .45)",
+                color: deteniendo ? "var(--color-tinta-3)" : "var(--color-terracota)",
+              }}
+            >
+              {deteniendo ? "Deteniendo…" : "Detener"}
+            </button>
+          )}
+        </div>
       </div>
     </header>
   );
@@ -94,19 +127,25 @@ export function Masthead({
 function Estado({
   conectado,
   corriendo,
+  detenido,
   modo,
   llm,
 }: {
   conectado: boolean;
   corriendo: boolean;
+  detenido: boolean;
   modo?: Modo;
   llm: boolean;
 }) {
+  // Detenido va en arena, no en terracota: no es un fallo. Pero tampoco puede
+  // decir "listo", que se leería como que el cierre cuadró.
   const color = !conectado
     ? "var(--color-terracota)"
     : corriendo
       ? "var(--color-ambar)"
-      : "var(--color-musgo)";
+      : detenido
+        ? "var(--color-arena)"
+        : "var(--color-musgo)";
 
   const texto = !conectado
     ? "backend caído"
@@ -114,11 +153,13 @@ function Estado({
       ? modo
         ? `en curso · ${TEXTO_MODO[modo]}`
         : "en curso"
-      : modo
-        ? `listo · ${TEXTO_MODO[modo]}`
-        : llm
-          ? "listo"
-          : "listo · sin LLM";
+      : detenido
+        ? "detenido · incompleto"
+        : modo
+          ? `listo · ${TEXTO_MODO[modo]}`
+          : llm
+            ? "listo"
+            : "listo · sin LLM";
 
   return (
     <span className="flex items-center gap-2">

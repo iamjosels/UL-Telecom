@@ -96,6 +96,19 @@ export class ErrorDataset extends ErrorApi {
   }
 }
 
+/**
+ * Pide que el cierre en curso pare.
+ *
+ * No corta el stream: el backend marca la corrida y sale en su siguiente punto
+ * de control, y entonces llega el evento `cancelado` seguido de `fin`. Cortar
+ * aquí por nuestra cuenta dejaría el hilo del servidor trabajando y el candado
+ * tomado, así que el reintento daría 409 durante un minuto.
+ */
+export const detenerCierre = () =>
+  pedir<{ ts: string; detenido: boolean; motivo?: string }>("/run/detener", {
+    method: "POST",
+  });
+
 export const getEstadoDatos = () => pedir<EstadoDatos>("/datos/estado");
 
 export const restaurarDemo = () =>
