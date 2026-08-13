@@ -1,0 +1,34 @@
+# SON-IA · despliegue en Render.
+#
+# Con este archivo en la raíz del repositorio, Render lo detecta como Blueprint
+# y no hay que rellenar nada a mano salvo la clave.
+#
+#   1. Sube el repositorio a GitHub.
+#   2. En Render: New > Blueprint, y elige el repositorio.
+#   3. Pega GROQ_API_KEY cuando la pida. Es lo único manual, a propósito.
+#
+# El plan gratuito duerme el servicio tras 15 minutos sin visitas: la primera
+# carga después de dormirse tarda cerca de un minuto porque tiene que levantar
+# el contenedor y volver a leer los 6 CSV. A partir de ahí va normal.
+
+services:
+  - type: web
+    name: son-ia
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+
+    # La API responde bajo /api; la raíz es el tablero. Se sondea la API porque
+    # es lo que de verdad indica que el backend cargó los datos.
+    healthCheckPath: /api/
+
+    envVars:
+      # sync: false = Render la pide al desplegar y la guarda cifrada. Nunca
+      # queda escrita en este archivo ni en el repositorio.
+      - key: GROQ_API_KEY
+        sync: false
+
+      # Sin esto Python bufferea la salida y los logs de Render van con retraso.
+      - key: PYTHONUNBUFFERED
+        value: "1"

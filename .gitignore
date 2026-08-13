@@ -1,0 +1,32 @@
+# Entorno
+.venv/
+venv/
+env/
+.env
+
+# Frontend. node_modules se reinstala con `npm ci` a partir del lockfile, y
+# dist lo construye el Dockerfile: ninguno de los dos pinta en el repositorio.
+node_modules/
+web/dist/
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Salidas del sistema
+logs/
+
+# CrewAI
+.crewai/
+db/
+
+# Editores / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.datos_subidos/

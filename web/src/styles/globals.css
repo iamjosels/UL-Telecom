@@ -1,0 +1,263 @@
+@import "tailwindcss";
+
+/* Autoalojadas: el día del pitch no puede depender de que haya internet. */
+@import "@fontsource-variable/space-grotesk";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+@theme {
+  /* --- superficies -------------------------------------------------------
+     Grafito cálido, no el negro azulado de siempre. Las capas se separan por
+     valor y por filete, nunca por sombra. */
+  --color-fondo: #14110f;
+  --color-superficie: #1c1917;
+  --color-superficie-2: #231f1c;
+  --color-superficie-3: #2b2622;
+
+  /* --- texto -------------------------------------------------------------
+     Blanco hueso. El #FFF puro sobre fondo oscuro vibra y delata plantilla. */
+  --color-tinta: #f5f0e8;
+  --color-tinta-2: #a8a29e;
+  --color-tinta-3: #78716c;
+
+  /* --- acento ------------------------------------------------------------
+     El ámbar se gana: número héroe, agente en curso, salto activo del arco.
+     En ningún otro sitio. */
+  --color-ambar: #e8a13c;
+  --color-cobre: #d97a34;
+
+  /* --- semánticos, apagados ---------------------------------------------- */
+  --color-terracota: #c4553d;
+  --color-musgo: #7a8450;
+  --color-arena: #c9bca5;
+
+  /* --- paleta de gráficos ------------------------------------------------
+     Validada con scripts/validate_palette.js contra la superficie #1C1917,
+     no elegida a ojo. La paleta cálida de la interfaz NO sirve como set
+     categórico: musgo↔terracota quedan a ΔE 2.9 en deuteranopía y cobre↔ámbar
+     a ΔE 9.9 incluso con visión normal.
+
+     La salida fue no usar paleta categórica. Casi ningún dato de aquí lo es:
+     son magnitudes, escalas ordenadas y polaridad. */
+
+  /* Magnitud y escalas ordenadas. Un solo tono, claro -> oscuro.
+     [PASS] monótona · saltos ≥0.06 · 17° de dispersión · extremo 2.02:1 */
+  --color-rampa-1: #f2c98a;
+  --color-rampa-2: #e8a13c;
+  --color-rampa-3: #c97f26;
+  --color-rampa-4: #9e5f1b;
+  --color-rampa-5: #6e4114;
+
+  /* Polaridad. El azul pizarra vive SOLO dentro de los gráficos, para lo que
+     baja. [PASS] deuteranopía ΔE 19.4 · tritan 29.5 · normal 24.2 */
+  --color-sube: #c4553d;
+  --color-baja: #5b8fc7;
+
+  /* Cromo del gráfico: recesivo, nunca compite con el dato. */
+  --color-rejilla: #2c2926;
+  --color-eje: #3a3531;
+  --color-atenuado: #4a423c;
+
+  /* --- tipografía -------------------------------------------------------- */
+  --font-display: "Space Grotesk Variable", system-ui, sans-serif;
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  --ease-suave: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@layer base {
+  :root {
+    --filete: rgb(245 240 232 / 0.08);
+    --filete-fuerte: rgb(245 240 232 / 0.14);
+    color-scheme: dark;
+  }
+
+  * {
+    border-color: var(--filete);
+  }
+
+  html {
+    background: var(--color-fondo);
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-fondo);
+    color: var(--color-tinta);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-variant-ligatures: none;
+  }
+
+  /* Ancho fijo SOLO donde los números se alinean en vertical: filas de tabla,
+     marcas de eje, el registro de trazabilidad.
+     En una cifra grande y suelta el ancho fijo se nota: cada dígito ocupa lo
+     que un cero y un "121" se lee separado. Ahí van figuras proporcionales. */
+  .cifra {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  /* Excepción del número héroe: mientras cuenta de un valor a otro, con
+     figuras proporcionales el número baila de ancho en cada fotograma, que es
+     peor que verlo algo suelto. Ancho fijo al animar, proporcional al posarse. */
+  .cifra-animando {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  ::selection {
+    background: rgb(232 161 60 / 0.28);
+    color: var(--color-tinta);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(245 240 232 / 0.1);
+    border: 3px solid var(--color-fondo);
+    border-radius: 99px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(245 240 232 / 0.18);
+  }
+
+  :focus-visible {
+    outline: 1px solid var(--color-ambar);
+    outline-offset: 2px;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+  }
+}
+
+@layer components {
+  /* Label de sección. La jerarquía la da el tracking, no el color chillón. */
+  .rotulo {
+    font-family: var(--font-sans);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-tinta-3);
+  }
+
+  .filete-t {
+    border-top: 1px solid var(--filete);
+  }
+  .filete-b {
+    border-bottom: 1px solid var(--filete);
+  }
+  .filete-l {
+    border-left: 1px solid var(--filete);
+  }
+}
+
+/* --- pantallas bajas -----------------------------------------------------
+   Una ventana de portátil con barra del navegador y barra de tareas deja unos
+   860 px útiles, no los 1050 del diseño. Aquí se comprime lo que puede
+   comprimirse para que la vista de cierre siga cabiendo entera: es el caso
+   normal, no la excepción. */
+@media (max-height: 900px) {
+  .heroe-cifra {
+    font-size: clamp(2.1rem, 4vw, 3.2rem) !important;
+  }
+  .heroe-seccion {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+  }
+  .heroe-pie {
+    display: none;
+  }
+}
+
+@media (max-height: 780px) {
+  .heroe-cifra {
+    font-size: clamp(1.9rem, 3.4vw, 2.6rem) !important;
+  }
+  .grafico-cascada {
+    max-height: 200px;
+  }
+}
+
+/* --- movimiento ----------------------------------------------------------
+   Sutil. Entradas cortas, sin rebotes. */
+@keyframes entra {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes late {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.anim-entra {
+  animation: entra 0.28s var(--ease-suave) both;
+}
+
+.anim-late {
+  animation: late 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* La vista de hallazgos lleva seis paneles y el bloque del supervisor. En
+   pantallas bajas se aprieta el cromo (padding, cabeceras, alto de gráfico)
+   antes que recortar el dato.
+
+   Va con !important porque compite con utilidades de Tailwind sobre la misma
+   propiedad: sin esto la regla se escribe y no gana, que es peor que no
+   escribirla. */
+@media (max-height: 900px) {
+  .panel-dato {
+    padding-block: 0.45rem !important;
+  }
+  .panel-dato-cab {
+    margin-bottom: 0.3rem !important;
+  }
+  .panel-dato svg {
+    max-height: 112px;
+  }
+  .supervisor {
+    padding-block: 0.5rem !important;
+  }
+  .supervisor > div:last-child {
+    gap: 0.5rem 2rem !important;
+    margin-top: 0.5rem !important;
+  }
+  /* El párrafo de diagnóstico y la nota del pie son contexto, no dato. */
+  .supervisor p.text-[11px] {
+    display: none;
+  }
+}

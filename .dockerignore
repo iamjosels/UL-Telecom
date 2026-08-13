@@ -1,0 +1,43 @@
+# Lo primero y lo importante: la clave de Groq no entra en la imagen. Va como
+# variable de entorno en el host y en ningún otro sitio.
+.env
+.env.*
+
+# Entornos y dependencias: se reinstalan dentro, y copiarlos rompería la imagen
+# porque el .venv de Windows trae binarios que en Linux no valen.
+.venv/
+venv/
+env/
+**/node_modules/
+
+# Se construye dentro, en la etapa de node.
+web/dist/
+
+# Basura de Python
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Salidas locales: el contenedor genera las suyas y son efímeras.
+logs/
+.datos_subidos/
+.crewai/
+db/
+
+# No hacen falta para correr
+.git/
+.gitignore
+docs/
+tests/
+*.md
+run_demo.py
+validar_baseline.py
+scripts/
+
+# Editores y sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
