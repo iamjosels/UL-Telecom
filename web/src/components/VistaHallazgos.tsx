@@ -40,7 +40,10 @@ export function VistaHallazgos({ kpis, alertas, pasos, detalle }: Props) {
   const hayCorrida = pasos.some((p) => p.estado === "ok");
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-1 gap-px overflow-y-auto bg-[var(--filete)] xl:grid-cols-3">
+    // Sin scroll propio: quien desplaza es el contenedor de la vista, en
+    // App.tsx. Dos scrolls anidados hacen que la rueda mueva uno u otro según
+    // dónde esté el cursor, que es exactamente el problema que había.
+    <div className="grid shrink-0 grid-cols-1 gap-px bg-[var(--filete)] xl:grid-cols-3">
       <Panel titulo="Antigüedad de la deuda" nota="la parte sólida es lo que se provisiona">
         {kpis ? (
           <Columnas

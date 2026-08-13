@@ -340,7 +340,14 @@ export default function App() {
         )}
 
         {vista === "hallazgos" && (
-          <>
+          // Un solo contenedor con scroll para toda la vista.
+          //
+          // Antes solo desplazaba la rejilla de gráficos, y el panel del
+          // supervisor quedaba fuera: con el cursor sobre él (que es la mitad
+          // de arriba de la pantalla, justo donde uno lo pone) la rueda no
+          // hacía nada y la vista parecía atascada. Además, con una lectura
+          // ejecutiva larga ese panel se recortaba sin forma de llegar al resto.
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
             <SupervisorPanel
               alertas={estado.alertas}
               narrativa={estado.narrativa}
@@ -355,7 +362,7 @@ export default function App() {
               pasos={estado.pasos}
               detalle={detalle}
             />
-          </>
+          </div>
         )}
 
         {vista === "traza" && (
