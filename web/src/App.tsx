@@ -22,7 +22,8 @@ import {
   getResultados,
   getSalud,
 } from "./lib/api";
-import type { DetalleTools, EstadoDatos, Kpis } from "./lib/types";
+import { monto } from "./lib/format";
+import type { AlertaCompleta, DetalleTools, EstadoDatos, Kpis } from "./lib/types";
 import { agentesDe, estadoInicial, reducer } from "./state/runReducer";
 import { useArco } from "./state/useArco";
 
@@ -42,6 +43,20 @@ export default function App() {
   const abortar = useRef<AbortController | null>(null);
   /** El usuario pidió parar. Evita que la cadena de reserva relance el cierre. */
   const pidioParar = useRef(false);
+
+  /**
+   * Modo presentación: `?demo=1`.
+   *
+   * Abre con el ciclo ya cerrado, para no quemar los primeros segundos del
+   * pitch dando un clic y esperando. Corre el camino determinista a propósito:
+   * tarda 2.7 s en vez de 60-90, no depende de la cuota de Groq, y reproduce el
+   * arco A->B->C igual, que es lo que hay que ver.
+   */
+  const presentacion = useRef(
+    typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("demo") === "1",
+  ).current;
+  const yaArranco = useRef(false);
 
   const corriendo = estado.fase === "corriendo";
   const arco = useArco(estado.etapa, true);
@@ -126,8 +141,13 @@ export default function App() {
   }, []);
 
   // --- cierre del ciclo ----------------------------------------------------
-  const cerrarCiclo = useCallback(async () => {
+  //
+  // `sinLlm` es explícito y no se lee del estado porque el modo presentación
+  // arranca el cierre en el mismo tick en que decide correrlo: leer `modoSeguro`
+  // ahí devolvería el valor anterior.
+  const cerrarCiclo = useCallback(async (sinLlm?: boolean) => {
     if (corriendo) return;
+    const determinista = sinLlm ?? modoSeguro;
 
     setNota(undefined);
     setVista("cierre");
@@ -147,7 +167,7 @@ export default function App() {
       });
 
     try {
-      await lanzar(modoSeguro);
+      await lanzar(determinista);
     } catch (e) {
       if (controlador.signal.aborted) return;
 
@@ -159,7 +179,7 @@ export default function App() {
       // Se pidió parar: repetir sin LLM sería justo lo contrario de lo pedido.
       if (pidioParar.current) return;
 
-      if (!modoSeguro) {
+      if (!determinista) {
         setNota("El camino con agentes falló. Repitiendo sin LLM, con las mismas cifras.");
         try {
           despachar({ tipo: "arranca" });
@@ -175,7 +195,7 @@ export default function App() {
         setKpis(k);
         despachar({
           tipo: "falla",
-          mensaje: "No se pudo correr el cierre. Se muestran las últimas cifras.",
+          mensaje: "No se pudo cerrar el ciclo. Se muestran las últimas cifras calculadas.",
         });
       } catch {
         despachar({
@@ -188,6 +208,14 @@ export default function App() {
       setDeteniendo(false);
     }
   }, [corriendo, modoSeguro, arco]);
+
+  // Arranque del modo presentación. Espera a tener backend y KPIs: lanzarlo
+  // antes daría 409 o pintaría el arco sobre una portada todavía vacía.
+  useEffect(() => {
+    if (!presentacion || yaArranco.current || cargando || !salud.ok || corriendo) return;
+    yaArranco.current = true;
+    void cerrarCiclo(true);
+  }, [presentacion, cargando, salud.ok, corriendo, cerrarCiclo]);
 
   /**
    * Detener el cierre en curso.
@@ -301,6 +329,8 @@ export default function App() {
                 corriendo={corriendo}
               />
             </div>
+            <HallazgoMasCaro alertas={estado.alertas} />
+
             <div className="filete-t grid shrink-0 grid-cols-1 gap-px bg-[var(--filete)] lg:grid-cols-3">
               {agentes.map((a) => (
                 <AgenteColumna key={a.clave} agente={a} corriendo={corriendo} />
@@ -381,4 +411,42 @@ function humanizar(mensaje: string): string {
   }
   const limpio = mensaje.split(/[\n{]/)[0]?.trim() ?? mensaje;
   return limpio.length > 160 ? `${limpio.slice(0, 157)}…` : limpio;
+}
+
+/**
+ * El hallazgo que más dinero mueve, en una línea.
+ *
+ * En la vista de cierre se veía el número héroe y el trabajo de los agentes,
+ * pero para saber QUÉ encontraron había que cambiar de pestaña. En una
+ * presentación eso es un scroll o un clic de más justo en el momento en que hay
+ * que rematar. Aquí queda la conclusión, sin sacar a nadie de la primera
+ * pantalla.
+ *
+ * Se muestra uno solo a propósito: `alertas` ya viene ordenada por severidad e
+ * impacto desde el backend, así que el primero ES el más caro. Enseñar tres
+ * convertiría la franja en otra lista que leer.
+ */
+function HallazgoMasCaro({ alertas }: { alertas: AlertaCompleta[] }) {
+  const a = alertas.find((x) => x.impacto_pen > 0);
+  if (!a) return null;
+
+  return (
+    <div className="filete-t anim-entra flex shrink-0 flex-wrap items-baseline gap-x-4 gap-y-1 px-6 py-2.5">
+      <span className="rotulo text-[9.5px]">Hallazgo más caro</span>
+      <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--color-tinta)]">
+        {a.titulo}
+      </span>
+      {a.accion && (
+        <span className="hidden min-w-0 max-w-[38ch] truncate text-[11px] text-[var(--color-tinta-2)] lg:inline">
+          {a.accion}
+        </span>
+      )}
+      {a.responsable && (
+        <span className="shrink-0 text-[10.5px] text-[var(--color-cobre)]">{a.responsable}</span>
+      )}
+      <span className="cifra shrink-0 font-[family-name:var(--font-display)] text-[17px] font-medium text-[var(--color-rampa-2)]">
+        S/{monto(a.impacto_pen)}
+      </span>
+    </div>
+  );
 }

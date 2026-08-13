@@ -617,11 +617,13 @@ def detectar_anomalias(severidad_minima: str | None = None) -> ResultadoTool:
         "fecha_vto_formato_inconsistente",
         mal["n"],
         mal["monto"],
-        f"Facturas con FECHA_VTO en formato YYYYMMDD en vez de YYYY-MM-DD, todas del sistema "
-        f"{list(mal['sistemas'])}. Un parseo de formato único las descarta y desaparecen de la "
-        f"cartera: es la causa de que el reporte base subestime la deuda.",
+        f"Facturación emitida en el sistema {list(mal['sistemas'])} que el reporte base no "
+        f"consolida: trae FECHA_VTO en formato YYYYMMDD en vez de YYYY-MM-DD. Un parseo de "
+        f"formato único la descarta y desaparece de la cartera. Es la causa de que el reporte "
+        f"base subestime la deuda. Problema distinto de la fuga por servicios sin facturar: "
+        f"aquí la factura existe, lo que falla es la consolidación.",
         "critica",
-        titulo="Facturas que el reporte actual no llega a ver")
+        titulo="Facturación en ISIS no consolidada")
 
     # -- notas de crédito -----------------------------------------------------
     nc_mayor = saldos[saldos["nc"] > saldos["total"] + TOL_SALDO]

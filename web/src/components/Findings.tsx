@@ -110,12 +110,12 @@ function Partidas({ kpis }: { kpis: Kpis }) {
       sangria: true,
     },
     {
-      etiqueta: "Fuga por servicios no facturados",
+      etiqueta: "Fuga por no facturar",
       valor: kpis.fuga_estimada_mes_pen,
       nota: `${num(kpis.cuentas_sin_factura)} cuentas activas, por mes de ciclo`,
     },
     {
-      etiqueta: "Facturas fuera de AMDOCS",
+      etiqueta: "Facturación en ISIS no consolidada",
       valor: r.monto_oculto_pen,
       nota: `${num(r.facturas_ocultas)} documentos que el reporte actual no ve`,
     },

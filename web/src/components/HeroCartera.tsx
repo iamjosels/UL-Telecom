@@ -17,6 +17,20 @@ import type { Reconciliacion } from "../lib/types";
  * cuadra, miente.
  */
 
+/**
+ * Qué agente desbloquea cada etapa del arco.
+ *
+ * No es decorativo ni está elegido aquí: son los mismos dueños que fija
+ * `runReducer.ts` con `TOOL_ETAPA_B` (resumen_facturacion, de Facturación) y
+ * `TOOL_ETAPA_C` (cartera_vencida, de Cobranzas). A es el punto de partida, el
+ * dato que ya tenía el sistema, así que no lo movió nadie.
+ */
+const QUIEN_MUEVE: Record<Etapa, string> = {
+  0: "",
+  1: "Facturación",
+  2: "Cobranzas",
+};
+
 interface Props {
   reconciliacion?: Reconciliacion;
   carteraC?: number;
@@ -46,9 +60,9 @@ export function HeroCartera({
     { clave: "A", rotulo: "Lo que ve el sistema", total: totales[0]! },
     {
       clave: "B",
-      rotulo: "Con las de ISIS",
+      rotulo: "Facturación en ISIS",
       total: totales[1]!,
-      causa: r ? `${num(r.facturas_ocultas)} facturas fuera de AMDOCS` : "",
+      causa: r ? `${num(r.facturas_ocultas)} facturas de ISIS sin consolidar` : "",
     },
     {
       clave: "C",
@@ -60,7 +74,7 @@ export function HeroCartera({
 
   const pies = [
     "Cruce literal del correlativo, con la fecha en un solo formato.",
-    r ? `Aparecen ${num(r.facturas_ocultas)} facturas que el reporte actual no llega a ver.` : "",
+    r ? `Aparecen ${num(r.facturas_ocultas)} facturas emitidas en ISIS que el reporte base no consolida.` : "",
     r ? `${num(r.pagos_recuperados)} pagos ya estaban cobrados: faltaba aplicarlos.` : "",
   ];
 
@@ -72,8 +86,19 @@ export function HeroCartera({
     <section className="heroe-seccion w-full px-6 py-4">
       <div className="flex flex-wrap items-end gap-x-10 gap-y-4">
         <div className="min-w-0">
-          <div className="flex items-baseline gap-3">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <h2 className="rotulo">Cartera vencida</h2>
+            {/* Quién movió el número. Es la mitad de la historia: sin esto el
+                héroe cambia solo y parece magia, en vez de el resultado de que
+                un agente concreto acaba de encontrar algo. */}
+            {QUIEN_MUEVE[etapa] && (
+              <span
+                key={etapa}
+                className="anim-entra text-[10.5px] text-[var(--color-cobre)]"
+              >
+                lo movió {QUIEN_MUEVE[etapa]}
+              </span>
+            )}
             {corriendo && (
               <span className="anim-late text-[10.5px] text-[var(--color-rampa-2)]">
                 recalculando

@@ -18,7 +18,12 @@
      Blanco hueso. El #FFF puro sobre fondo oscuro vibra y delata plantilla. */
   --color-tinta: #f5f0e8;
   --color-tinta-2: #a8a29e;
-  --color-tinta-3: #78716c;
+  /* Terciario. Estaba en #78716C, que da 3.65:1 sobre la superficie: por debajo
+     del 4.5 de AA para texto pequeño, y en proyector las unidades ("S/") y las
+     notas ("al mes", "desde 97.91%") se lavaban hasta desaparecer. Este da
+     4.63:1 y sigue muy por debajo de tinta-2 (6.93), así que la jerarquía de
+     tres niveles se mantiene. Medido, no elegido a ojo. */
+  --color-tinta-3: #8a827c;
 
   /* --- acento ------------------------------------------------------------
      El ámbar se gana: número héroe, agente en curso, salto activo del arco.

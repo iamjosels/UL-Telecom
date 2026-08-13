@@ -50,7 +50,7 @@ class ArgsResumenFacturacion(BaseModel):
     nombre="detectar_servicios_no_facturados",
     agente=AGENTE,
     args_schema=ArgsNoFacturados,
-    etiqueta="Quiebres: servicios activos sin factura",
+    etiqueta="Fuga por no facturar",
     kpi="aseguramiento_ingresos",
     descripcion=(
         "Detecta la fuga de ingresos: cuentas con servicio ACTIVO en planta fija o móvil "
@@ -87,7 +87,7 @@ def detectar_servicios_no_facturados(incluir_suspendidos: bool = False) -> Resul
     ambito = "activo o suspendido" if incluir_suspendidos else "activo"
 
     resumen = (
-        f"FUGA DE INGRESOS. {num(len(sin_factura))} de {num(len(ctas_base))} cuentas con "
+        f"FUGA POR NO FACTURAR. {num(len(sin_factura))} de {num(len(ctas_base))} cuentas con "
         f"servicio {ambito} ({pct(pct_fuga)}) no tienen NINGUNA factura emitida. "
         f"Afecta a {num(clientes)} clientes (RUC). "
         f"Desglose por planta: {por_origen}. "
@@ -101,10 +101,14 @@ def detectar_servicios_no_facturados(incluir_suspendidos: bool = False) -> Resul
     alertas = [
         Alerta(
             severidad="critica",
-            titulo="Fuga de ingresos por servicios activos no facturados",
+            # Mismo nombre exacto que el KPI de portada y que el cuadro de
+            # impacto. Un número con cuatro nombres se lee como cuatro
+            # problemas. Corto a propósito: el rótulo del KPI no envuelve.
+            titulo="Fuga por no facturar",
             detalle=(
                 f"{len(sin_factura)} cuentas activas sin factura ({pct(pct_fuga)}), "
-                f"{clientes} clientes afectados"
+                f"{clientes} clientes afectados. Aquí no existe el documento, así que no hay "
+                f"nada que consolidar: es un problema distinto de la facturación en ISIS."
             ),
             impacto_pen=fuga_mes,
             kpi="aseguramiento_ingresos",
@@ -378,7 +382,7 @@ def resumen_facturacion(ruc: str | None = None) -> ResultadoTool:
     ratio_nc = monto_nc / total if total else 0.0
 
     resumen = (
-        f"ESCALERA DE FACTURACIÓN — {ambito}. "
+        f"ESCALERA DE FACTURACIÓN · {ambito}. "
         f"Emitidas {num(len(fac))} facturas por {pen(total)} "
         f"(rango {fac['fecha_emision'].min():%Y-%m-%d} a {fac['fecha_emision'].max():%Y-%m-%d}). "
         f"Últimos meses: {texto_escalera}. "
@@ -388,23 +392,15 @@ def resumen_facturacion(ruc: str | None = None) -> ResultadoTool:
         f"Ticket promedio por documento {pen(total / len(fac))}."
     )
 
-    alertas = []
-    if "ISIS" in por_sistema.index and len(por_sistema) > 1:
-        isis = por_sistema.loc["ISIS"]
-        alertas.append(
-            Alerta(
-                severidad="alta",
-                titulo="Facturación repartida entre dos sistemas sin integrar",
-                detalle=(
-                    f"{int(isis['count'])} documentos ({pen(isis['sum'])}) provienen de ISIS, "
-                    "con formato de fecha y de correlativo distinto al de AMDOCS"
-                ),
-                impacto_pen=round(float(isis["sum"]), 2),
-                kpi="aseguramiento_ingresos",
-                accion="Normalizar la integración ISIS -> AMDOCS (fechas y correlativos)",
-                responsable="TI",
-            )
-        )
+    # Sin alerta de ISIS aquí a propósito.
+    #
+    # La facturación de ISIS suma exactamente los mismos S/137,200.41 que las 57
+    # facturas con fecha malformada, así que cuando esta tool y `detectar_anomalias`
+    # alertaban cada una por su lado, el mismo dinero aparecía dos veces en la
+    # lista de hallazgos con dos nombres distintos y dos severidades. Queda una
+    # sola alerta, "Facturación en ISIS no consolidada", en detectar_anomalias.
+    # El dato sigue estando en el resumen de arriba, que es lo que lee el agente.
+    alertas: list[Alerta] = []
 
     cols = ["doc", "ruc", "razon_social", "cod_cuenta", "sistema", "fuente", "fecha_emision",
             "fecha_vto", "total"]

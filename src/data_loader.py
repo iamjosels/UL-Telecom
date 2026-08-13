@@ -692,7 +692,7 @@ def _verificar_estructura(d: Datos) -> None:
 
     if problemas:
         raise AssertionError(
-            "Invariantes estructurales rotas — las cifras no son confiables:\n  - "
+            "Invariantes estructurales rotas. Las cifras no son confiables:\n  - "
             + "\n  - ".join(problemas)
         )
 
@@ -888,7 +888,7 @@ if __name__ == "__main__":
 
     d = get_datos()
     print("=" * 72)
-    print("SON-IA · data_loader — verificación")
+    print("SON-IA · data_loader · verificación")
     print("=" * 72)
     print(json.dumps(d.diagnostico, indent=2, ensure_ascii=False, default=str))
 

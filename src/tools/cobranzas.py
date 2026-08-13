@@ -106,21 +106,14 @@ def conciliar_pagos(conciliacion: str = "canonica") -> ResultadoTool:
         f"Quedan {num(dg['residual'])} pagos sin identificar por {pen(dg['monto_residual'])}."
     )
 
-    alertas = [
-        Alerta(
-            severidad="critica",
-            titulo="Pagos cobrados pero no aplicados al documento",
-            detalle=(
-                f"{dg['recuperados']} pagos por {pen(dg['monto_recuperado'])} no cruzan por "
-                "diferencia de formato en el correlativo (cero inicial). Inflan la cartera y "
-                "gatillan gestión de cobranza a clientes que ya pagaron."
-            ),
-            impacto_pen=dg["monto_recuperado"],
-            kpi="mejora_algoritmo_aplicacion",
-            accion="Normalizar el correlativo en el algoritmo de aplicación (previa revisión)",
-            responsable="Recaudo / TI",
-        )
-    ]
+    # Sin alerta propia a propósito.
+    #
+    # Los pagos recuperables (S/106,157.92) son una PARTE de las partidas sin
+    # aplicar (S/106,289.40), que ya alerta `pagos_no_identificados`. Cuando
+    # había una alerta en cada tool, el mismo dinero salía dos veces en la lista
+    # de hallazgos con dos nombres y dos severidades, y quien sumara la columna
+    # contaba doble. La descomposición vive ahora dentro de esa única alerta.
+    alertas: list[Alerta] = []
 
     cols = ["doc", "ruc", "razon_social", "cod_cuenta", "sistema", "fecha_emision", "fecha_vto",
             "total", "pagado", "nc", "saldo", "estado_doc"]
@@ -183,7 +176,7 @@ class ArgsPagosNoIdentificados(BaseModel):
     nombre="pagos_no_identificados",
     agente=AGENTE,
     args_schema=ArgsPagosNoIdentificados,
-    etiqueta="Partidas bancarias sin identificar",
+    etiqueta="Partidas bancarias sin aplicar",
     kpi="tiempo_identificacion_deposito",
     descripcion=(
         "Lista los pagos cuya FACTURA_AFECTADA no existe en el maestro de facturas, es decir "
@@ -229,12 +222,12 @@ def pagos_no_identificados(solo_recuperables: bool = False) -> ResultadoTool:
     usd = huerfanos[huerfanos["moneda"] != "PEN"]
 
     resumen = (
-        f"PARTIDAS BANCARIAS SIN IDENTIFICAR. {num(len(huerfanos))} pagos por "
+        f"PARTIDAS BANCARIAS SIN APLICAR. {num(len(huerfanos))} pagos por "
         f"{pen(huerfanos['monto_pagado'].sum())} referencian una factura que no está en el "
         f"maestro ({pct(len(huerfanos) / len(pagos), 2)} del total de pagos). "
         f"Origen: {por_sistema}. "
         f"DIAGNÓSTICO: {num(len(recuperables))} de ellos ({pen(recuperables['monto_pagado'].sum())}) "
-        f"SÍ cruzan al normalizar el cero inicial del correlativo — no son partidas perdidas, "
+        f"SÍ cruzan al normalizar el cero inicial del correlativo. No son partidas perdidas: "
         f"son un problema de formato entre ISIS y AMDOCS. "
         f"Confianza del match: {conf}. "
         f"Sólo {num(len(residuales))} pagos por {pen(residuales['monto_pagado'].sum())} quedan "
@@ -243,18 +236,26 @@ def pagos_no_identificados(solo_recuperables: bool = False) -> ResultadoTool:
         f"({pen(usd['monto_pagado'].sum())}) y requieren revisión de tesorería antes de aplicar."
     )
 
+    # La única alerta del problema, con sus dos partes dentro. La suma cierra:
+    # total = recuperable + realmente perdido. Al desglosarlo aquí, la lista de
+    # hallazgos lleva una línea y no dos cifras casi iguales que parecen
+    # problemas distintos.
     alertas = [
         Alerta(
-            severidad="alta",
+            severidad="critica",
             titulo="Partidas bancarias sin aplicar",
             detalle=(
-                f"{len(huerfanos)} pagos por {pen(huerfanos['monto_pagado'].sum())} sin cruzar; "
-                f"{len(recuperables)} recuperables por normalización de correlativo"
+                f"{len(huerfanos)} pagos por {pen(huerfanos['monto_pagado'].sum())} no cruzan "
+                f"contra el maestro. De ellos, {len(recuperables)} por "
+                f"{pen(recuperables['monto_pagado'].sum())} sí cruzan al normalizar el cero "
+                f"inicial del correlativo: es dinero ya cobrado que infla la cartera y gatilla "
+                f"cobranza a clientes que ya pagaron. Solo {len(residuales)} por "
+                f"{pen(residuales['monto_pagado'].sum())} quedan realmente sin contraparte."
             ),
             impacto_pen=round(huerfanos["monto_pagado"].sum(), 2),
             kpi="tiempo_identificacion_deposito",
-            accion="Abrir cola de revisión: aplicar los de confianza 'exacto_monto' primero",
-            responsable="Recaudo",
+            accion="Normalizar el correlativo en el algoritmo de aplicación y abrir cola de revisión",
+            responsable="Recaudo / TI",
         )
     ]
     if len(usd):

@@ -31,7 +31,7 @@ export function KpiBand({ kpis, cargando }: Props) {
       barra: kpis?.tasa_conciliacion_mejorada,
     },
     {
-      rotulo: "Fuga estimada",
+      rotulo: "Fuga por no facturar",
       valor: kpis && monto(kpis.fuga_estimada_mes_pen),
       nota: "S/ al mes",
     },

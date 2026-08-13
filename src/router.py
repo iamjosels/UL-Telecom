@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from src.contracts import ResultadoTool
 from src.tools.registro import catalogo_texto, ejecutar
 from src.tools.registro import _ESPECS as ESPECS  # whitelist viva
+from src.voz import VOZ_ANALISTA, limpiar_relleno
 
 AGENTE = "AGENTE_CHAT"
 
@@ -203,16 +204,45 @@ def _numeros(texto: str) -> set[str]:
     return salida
 
 
-def numeros_inventados(redaccion: str, res: ResultadoTool) -> set[str]:
-    """Números que el LLM usó y que no están en la salida determinista.
+#: Margen que se acepta como redondeo. 26.86 -> "27" pasa; 66 -> "67" no.
+TOLERANCIA_REDONDEO = 0.5
 
-    Se toleran los enteros pequeños (0-100): son porcentajes redondeados,
-    conteos y referencias a tramos como '90' que ya viven en el texto fuente.
+
+def numeros_fuera_de(redaccion: str, fuente: str) -> set[str]:
+    """Números que aparecen en la redacción y no salen de su fuente.
+
+    Lo usan los dos sitios donde escribe un modelo: el chat y la lectura
+    ejecutiva del supervisor.
+
+    Sobre la tolerancia. Antes se dejaba pasar cualquier entero de 0 a 100, con
+    la idea de no marcar porcentajes redondeados ni referencias a tramos. Era
+    demasiado ancha: el supervisor escribió "67 pagos no se aplican" donde los
+    datos decían 66 y el guardarraíl lo dejó pasar por ser un número pequeño.
+    Un conteo equivocado es exactamente lo que este control existe para atrapar.
+
+    Ahora un número solo se perdona si ALGUNA cifra de la fuente redondea a él.
+    26.86 justifica un "27"; nada justifica un "67" cuando la fuente dice 66.
     """
-    permitidos = _numeros(res.resumen) | _numeros(json.dumps(res.metricas, default=str))
-    usados = _numeros(redaccion)
-    sospechosos = usados - permitidos
-    return {n for n in sospechosos if not (n.isdigit() and int(n) <= 100)}
+    permitidos = _numeros(fuente)
+    sospechosos = _numeros(redaccion) - permitidos
+    if not sospechosos:
+        return set()
+
+    valores_fuente = [float(n) for n in permitidos]
+    inventados = set()
+    for n in sospechosos:
+        valor = float(n)
+        if any(abs(valor - v) <= TOLERANCIA_REDONDEO for v in valores_fuente):
+            continue  # es el redondeo de una cifra que sí está
+        inventados.add(n)
+    return inventados
+
+
+def numeros_inventados(redaccion: str, res: ResultadoTool) -> set[str]:
+    """Igual, para la salida de una herramienta concreta."""
+    return numeros_fuera_de(
+        redaccion, res.resumen + " " + json.dumps(res.metricas, default=str)
+    )
 
 
 # --------------------------------------------------------------------------
@@ -269,13 +299,16 @@ def supuesto_no_soportado(pregunta: str) -> str | None:
 
 
 PROMPT_REDACTOR = (
-    "Eres un analista del ciclo de ingresos B2B de una telco. Respondes en español, en 2 a 4 "
-    "frases, claro y directo.\n"
+    "Eres un analista del ciclo de ingresos B2B de una telco peruana. Respondes en español, en "
+    "2 a 4 frases.\n"
     "REGLA ABSOLUTA: usa ÚNICAMENTE las cifras del BLOQUE DE DATOS. Está prohibido calcular, "
     "estimar, redondear distinto, sumar o añadir números que no estén ahí. Si el dato no "
     "aparece, di que no está disponible.\n"
     "REGLA 2: cada cifra conserva el periodo que trae el bloque. Está prohibido reetiquetarla "
-    "con otra fecha u horizonte. Un saldo de hoy no es 'la cartera a diciembre'."
+    "con otra fecha u horizonte. Un saldo de hoy no es 'la cartera a diciembre'.\n"
+    # La regla de nombres vive en VOZ_ANALISTA, que la comparten los dos
+    # prompts. Tenerla aquí también solo garantizaba que un día divergieran.
+    "\n" + VOZ_ANALISTA
 )
 
 
@@ -315,7 +348,7 @@ def responder(pregunta: str, llm=None) -> dict:
                 )
             ).strip()
             if propuesta and not numeros_inventados(propuesta, res):
-                texto, redactado_por_llm = propuesta, True
+                texto, redactado_por_llm = limpiar_relleno(propuesta), True
             elif propuesta:
                 descartada = True  # el guardarraíl saltó: se devuelve el determinista
         except Exception:

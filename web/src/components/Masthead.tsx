@@ -15,15 +15,18 @@ interface Props {
   /** El último cierre paró porque se pidió, no porque terminara. */
   detenido?: boolean;
   onModoSeguro: (v: boolean) => void;
-  onCerrarCiclo: () => void;
+  onCerrarCiclo: (sinLlm?: boolean) => void;
   onDetener: () => void;
   onAbrirDatos: () => void;
 }
 
+// "hibrido" era "agentes + relleno": nombre interno del mecanismo de reserva,
+// no algo que le diga nada a quien mira. Para el usuario el cierre corrió con
+// agentes, y si alguno no llegó, el aviso ya lo cuenta aparte.
 const TEXTO_MODO: Record<Modo, string> = {
   deterministico: "sin LLM",
   crew: "agentes",
-  hibrido: "agentes + relleno",
+  hibrido: "agentes",
 };
 
 export function Masthead({
@@ -48,12 +51,9 @@ export function Masthead({
           SON<span className="text-[var(--color-ambar)]">·</span>IA
         </span>
         <span className="rotulo hidden sm:inline">Ciclo del ingreso B2B</span>
-        <span className="hidden items-baseline gap-1.5 text-[10.5px] text-[var(--color-tinta-3)] lg:flex">
-          <kbd className="inline-flex h-[15px] min-w-[15px] items-center justify-center border border-[var(--filete-fuerte)] px-1 font-[family-name:var(--font-mono)] text-[9.5px]">
-            G
-          </kbd>
-          guión
-        </span>
+        {/* La pista de teclado del guión de pitch vivía aquí. Es una nota para
+            quien presenta, no información de producto: en pantalla delata el
+            andamiaje. La tecla G sigue funcionando igual, sin anunciarse. */}
       </div>
 
       <div className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -97,7 +97,10 @@ export function Masthead({
             pasando a la izquierda y cómo pararlo a la derecha. */}
         <div className="flex items-center gap-2">
           <button
-            onClick={onCerrarCiclo}
+            // Envuelto a propósito: `onClick={onCerrarCiclo}` le pasaría el
+            // MouseEvent como primer argumento, y ese objeto es truthy, así que
+            // el cierre se forzaría siempre a determinista sin que se note.
+            onClick={() => onCerrarCiclo()}
             disabled={corriendo || !conectado}
             className="group relative overflow-hidden border border-[var(--color-ambar)]/45 bg-[var(--color-ambar)]/10 px-4 py-1.5 text-[13px] font-medium text-[var(--color-ambar)] transition-colors duration-200 hover:bg-[var(--color-ambar)]/18 disabled:cursor-not-allowed disabled:border-[var(--filete)] disabled:bg-transparent disabled:text-[var(--color-tinta-3)]"
           >

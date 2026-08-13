@@ -39,6 +39,8 @@ from src.pipeline import ejecutar_pasos
 from src.plan import FECHA_CORTE, OBJETIVO_DEMO, PLAN_DE_CIERRE
 from src.reporte import kpis_planos, render_reporte
 from src.tools import registro
+from src.router import numeros_fuera_de
+from src.voz import VOZ_ANALISTA, limpiar_relleno
 
 Emisor = Callable[[dict], None] | None
 
@@ -51,16 +53,18 @@ PROCESO = os.getenv("SONIA_PROCESO", "supervisado").strip().lower()
 
 PROMPT_SUPERVISOR = (
     "Eres el Supervisor del Ciclo de Ingresos B2B de Integratel. Recibes los informes de tus "
-    "tres agentes operadores y produces la LECTURA EJECUTIVA del cierre.\n\n"
+    "tres agentes operadores y escribes la lectura ejecutiva del cierre.\n\n"
     "REGLA ABSOLUTA: usa ÚNICAMENTE las cifras que aparecen en los informes. Está prohibido "
-    "calcular, sumar, estimar o redondear distinto. Si necesitas una cifra que no está, dilo.\n\n"
-    "Estructura tu respuesta en 4 bloques breves y en español:\n"
-    "1. DIAGNÓSTICO: ¿comparten los hallazgos una causa raíz común? Nómbrala.\n"
-    "2. LO MÁS URGENTE: los 3 hallazgos con más dinero en juego, con su cifra.\n"
-    "3. DECISIONES: qué hay que aprobar hoy.\n"
-    "4. ACCIONES: 4 acciones concretas, cada una con su responsable "
-    "(Facturación / Cobranzas / Recaudo / TI / Contabilidad).\n"
-    "Máximo 20 líneas en total."
+    "calcular, sumar, estimar o redondear distinto. Si necesitas una cifra que no está, dilo.\n"
+    "SEGUNDA REGLA: los hallazgos miden cosas distintas del mismo ciclo y NO se suman entre "
+    "sí. No inventes un total agregado.\n\n"
+    + VOZ_ANALISTA
+    + "\n\nEscribe en español y en este orden, sin numerar ni titular los bloques:\n"
+    "Primero, dos frases: qué falla de fondo y por qué explica varios síntomas.\n"
+    "Después, los tres hallazgos con más dinero en juego, uno por línea, con su cifra.\n"
+    "Cierra con cuatro acciones, una por línea, cada una con su responsable entre paréntesis "
+    "(Facturación, Cobranzas, Recaudo, TI o Contabilidad).\n"
+    "Máximo 16 líneas."
 )
 
 
@@ -106,9 +110,29 @@ def _consolidar_con_supervisor(salidas: list[str], emitir: Emisor = None) -> str
         emitir({"tipo": "agente_mensaje", "agente": "SUPERVISOR",
                 "texto": "Consolidando los tres informes en la lectura ejecutiva..."})
 
+    # El ranking se le da hecho, no se le pide que lo deduzca.
+    #
+    # Pidiéndole "los tres hallazgos con más dinero" sobre los informes en prosa,
+    # el modelo no encontraba las cifras y rellenaba repitiendo cuatro veces la
+    # misma frase genérica. El orden por severidad e impacto ya está calculado en
+    # Python, así que dárselo cuesta nada y elimina de raíz la parte en la que
+    # improvisaba.
+    ranking = "\n".join(
+        f"- {a.titulo}: S/{a.impacto_pen:,.2f} ({a.severidad})"
+        for a in registro.alertas_ordenadas()
+        if a.impacto_pen > 0
+    )
+
     mensajes = [
         {"role": "system", "content": PROMPT_SUPERVISOR},
-        {"role": "user", "content": f"INFORMES DE LOS AGENTES:\n\n{informes}"},
+        {
+            "role": "user",
+            "content": (
+                f"HALLAZGOS ORDENADOS POR DINERO EN JUEGO (ya calculado, no lo recalcules; "
+                f"miden cosas distintas y NO se suman):\n{ranking}\n\n"
+                f"INFORMES DE LOS AGENTES:\n\n{informes}"
+            ),
+        },
     ]
 
     # Se intenta primero con el modelo de razonamiento y, si su cuota está
@@ -120,10 +144,29 @@ def _consolidar_con_supervisor(salidas: list[str], emitir: Emisor = None) -> str
     for construir, etiqueta in ((llm_potente, "razonamiento"), (llm_chat, "rápido")):
         try:
             texto = str(construir().call(mensajes)).strip()
-            if texto:
-                audit.registrar_agente("SUPERVISOR", "consolidacion", texto[:500],
-                                       modelo=etiqueta)
-                return texto
+            if not texto:
+                continue
+
+            # El mismo guardarraíl numérico que el chat, que a la narrativa del
+            # supervisor le faltaba. Se le coló un "67 pagos" donde los datos
+            # decían 66: una cifra inventada, en el bloque que más se lee del
+            # informe. Si cita algo que no está en su fuente, se descarta y el
+            # informe sale con las cifras deterministas, como cuando el
+            # supervisor no llega a redactar.
+            fuente = ranking + "\n" + informes
+            if (inventadas := numeros_fuera_de(texto, fuente)):
+                _aviso(
+                    emitir,
+                    f"El supervisor citó cifras que no salen de los informes "
+                    f"({', '.join(sorted(inventadas)[:3])}). Se descartó su lectura; "
+                    f"el informe sale con las cifras deterministas.",
+                )
+                continue
+
+            texto = limpiar_relleno(texto)
+            audit.registrar_agente("SUPERVISOR", "consolidacion", texto[:500],
+                                   modelo=etiqueta)
+            return texto
         except registro.CorridaCancelada:
             # Se pidió detener durante la consolidación. No es que el supervisor
             # no pudiera: es que se le mandó parar. Sube sin disfrazarse de
@@ -185,7 +228,7 @@ def construir_crew(fecha_corte: str = FECHA_CORTE) -> Crew:
         ),
         expected_output=(
             "Máximo 12 líneas en español, en tres bloques: CONCILIACIÓN (tasa antes y después, "
-            "y monto reclasificado), PARTIDAS SIN IDENTIFICAR (cantidad y monto) y CARTERA "
+            "y monto reclasificado), PARTIDAS SIN APLICAR (cantidad y monto) y CARTERA "
             "VENCIDA (total y los cuatro tramos de aging). Cifras textuales de las herramientas."
         ),
         agent=cobranzas,

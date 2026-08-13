@@ -32,6 +32,22 @@ export function useArco(objetivo: Etapa, habilitado: boolean): UsarArco {
   const ultimoCambio = useRef<number>(0);
   const temporizador = useRef<number | undefined>(undefined);
 
+  // El modo manual deja de mandar en cuanto la corrida avanza.
+  //
+  // Antes, tocar una barra de la cascada o una flecha ponía `manual` y
+  // congelaba el avance automático hasta el siguiente cierre. Si eso pasaba a
+  // mitad de corrida el arco se quedaba plantado en la etapa que tocaste,
+  // aunque los agentes siguieran desbloqueando etapas detrás. El resultado que
+  // se ve es un héroe que no se mueve, o que aparece de golpe en C al final.
+  //
+  // La regla ahora es que explorar a mano no puede romper la reproducción: si
+  // llega una etapa nueva del backend, manda el backend.
+  const objetivoPrevio = useRef<Etapa>(objetivo);
+  useEffect(() => {
+    if (objetivo > objetivoPrevio.current) setManual(false);
+    objetivoPrevio.current = objetivo;
+  }, [objetivo]);
+
   // Avance automático hacia el objetivo, respetando la permanencia mínima.
   useEffect(() => {
     if (manual || etapa >= objetivo) return;
@@ -64,9 +80,16 @@ export function useArco(objetivo: Etapa, habilitado: boolean): UsarArco {
     setEtapa((e) => (e > 0 ? ((e - 1) as Etapa) : e));
   }, []);
 
+  // `Date.now()` y no 0, que era el bug del reveal.
+  //
+  // Con 0, el primer `transcurrido` valía "ahora menos 1970", muchísimo más que
+  // la permanencia, así que la espera salía 0 y el arco saltaba de A a B en
+  // cuanto llegaba el primer evento. La etapa A no se veía nunca: el héroe
+  // parecía aparecer directamente en B. Arrancar el reloj aquí le da a A sus
+  // 2.5 s, que es el punto de partida de toda la historia.
   const soltar = useCallback(() => {
     setManual(false);
-    ultimoCambio.current = 0;
+    ultimoCambio.current = Date.now();
   }, []);
 
   // Reinicio al empezar una corrida nueva.
@@ -74,7 +97,7 @@ export function useArco(objetivo: Etapa, habilitado: boolean): UsarArco {
     if (objetivo === 0) {
       setEtapa(0);
       setManual(false);
-      ultimoCambio.current = 0;
+      ultimoCambio.current = Date.now();
     }
   }, [objetivo]);
 

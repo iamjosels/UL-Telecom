@@ -47,7 +47,7 @@ def _tres_vistas(fecha_corte: str = CORTE_DEL_DATASET) -> tuple[str, dict]:
     conc = d.diagnostico["conciliacion"]
 
     lineas = [
-        encabezado(f"RECONCILIACIÓN DE CARTERA — tres lecturas del mismo dato ({fecha_corte})"),
+        encabezado(f"RECONCILIACIÓN DE CARTERA · tres lecturas del mismo dato ({fecha_corte})"),
         "",
         f"  A · Lo que el sistema ve hoy        {len(va):>5} facturas   {pen(a):>16}",
         "      (fecha en formato único, cruce literal de correlativo)",
@@ -243,10 +243,13 @@ def render_reporte(
 def _cuadro_impacto(resultados: dict[str, ResultadoTool]) -> str:
     """Cuadro de impacto con partidas que NO se solapan entre sí.
 
-    Deliberadamente no se suma el `impacto_pen` de todas las alertas: varias
-    describen el mismo dinero desde ángulos distintos (los S/106K aparecen como
-    'cobrado sin aplicar' y como 'partida sin identificar'), y sumarlos daría
-    una cifra inflada que no resiste una pregunta del jurado.
+    Deliberadamente no se suma el `impacto_pen` de las alertas, ni siquiera
+    ahora que ninguna repite el importe de otra. La razón dejó de ser el doble
+    conteo y pasó a ser conceptual: estas partidas miden cosas que no se
+    agregan. S/106,157.92 es dinero que ya entró y solo falta aplicar;
+    S/47,819.06 es deuda por cobrar; S/26,556.46 es un flujo mensual que se
+    repite cada ciclo. Sumar un cobro, una deuda y un flujo da un número sin
+    significado, y es la primera pregunta que haría alguien que sepa del tema.
     """
 
     def m(tool: str, clave: str, defecto: float = 0.0) -> float:
@@ -264,7 +267,7 @@ def _cuadro_impacto(resultados: dict[str, ResultadoTool]) -> str:
         ("Cobrado sin aplicar, recuperable de inmediato", recuperable, "una vez"),
         ("Cartera vencida real a gestionar", cartera, "al corte"),
         ("   de la cual, provisión de cobranza dudosa", pcd, "contable"),
-        ("Fuga de ingresos por servicios no facturados", fuga, "por mes"),
+        ("Fuga por no facturar", fuga, "por mes"),
         ("Riesgo fiscal: facturas a RUC NO HABIDO", fiscal, "acumulado"),
         ("Partidas realmente sin identificar", residual, "al corte"),
     ]
@@ -275,8 +278,8 @@ def _cuadro_impacto(resultados: dict[str, ResultadoTool]) -> str:
     lineas.extend(
         [
             "",
-            "  Las partidas anteriores son independientes entre sí y no deben sumarse con",
-            "  las alertas: varias alertas describen el mismo dinero desde ángulos distintos.",
+            "  Estas partidas no se suman entre sí. Una es dinero ya cobrado pendiente de",
+            "  aplicar, otra es deuda por cobrar y otra es un flujo que se repite cada mes.",
         ]
     )
     return "\n".join(lineas)

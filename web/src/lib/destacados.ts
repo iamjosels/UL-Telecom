@@ -33,10 +33,10 @@ export interface Destacado {
  */
 export const TITULOS: Record<string, string> = {
   resumen_facturacion: "Escalera de facturación",
-  detectar_servicios_no_facturados: "Fuga de ingresos",
+  detectar_servicios_no_facturados: "Fuga por no facturar",
   validar_clientes_sunat: "Riesgo tributario en la emisión",
   conciliar_pagos: "Conciliación pago ↔ factura",
-  pagos_no_identificados: "Partidas bancarias sin identificar",
+  pagos_no_identificados: "Partidas bancarias sin aplicar",
   cartera_vencida: "Cartera vencida",
   ratio_cobrado_facturado: "Ratio cobrado/facturado",
   detectar_anomalias: "Anomalías detectadas",
@@ -47,7 +47,7 @@ export const TITULOS: Record<string, string> = {
 
 export const DESTACADOS: Record<string, Destacado[]> = {
   resumen_facturacion: [
-    { clave: "facturado_isis_pen", rotulo: "Fuera de AMDOCS", formato: "pen" },
+    { clave: "facturado_isis_pen", rotulo: "Facturado en ISIS", formato: "pen" },
     { clave: "facturas", rotulo: "Documentos emitidos", formato: "num" },
   ],
   detectar_servicios_no_facturados: [

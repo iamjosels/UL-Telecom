@@ -116,7 +116,9 @@ export function VistaHallazgos({ kpis, alertas, pasos, detalle }: Props) {
         )}
       </Panel>
 
-      <Panel titulo="Cuadro de impacto" nota="partidas independientes, no se suman">
+      {/* La nota dice POR QUÉ no se suman, no solo que no se suman: son un
+          cobro pendiente de aplicar, una deuda y un flujo mensual. */}
+      <Panel titulo="Cuadro de impacto" nota="un cobro, una deuda y un flujo: no se suman">
         {kpis ? <Partidas kpis={kpis} /> : <Vacio />}
         {alertas.length > 0 && (
           <ul className="filete-t mt-3 space-y-1.5 pt-3">
@@ -189,7 +191,7 @@ export function TablaAnomalias({ filas }: { filas: Array<Record<string, unknown>
               {num(Number(f.registros))}
             </td>
             <td className="cifra py-1.5 text-right font-[family-name:var(--font-mono)] text-[var(--color-tinta)]">
-              {Number(f.monto_pen) > 0 ? `S/${monto(Number(f.monto_pen))}` : "—"}
+              {Number(f.monto_pen) > 0 ? `S/${monto(Number(f.monto_pen))}` : "·"}
             </td>
           </tr>
         ))}
@@ -238,8 +240,8 @@ function Partidas({ kpis }: { kpis: Kpis }) {
     { etiqueta: "Ya cobrado, sin aplicar", valor: r.monto_recuperado_pen, acento: true },
     { etiqueta: "Cartera vencida real", valor: r.vista_c_pen },
     { etiqueta: "Provisión de cobranza dudosa", valor: kpis.provision_pcd_pen, sangria: true },
-    { etiqueta: "Fuga por no facturar, al mes", valor: kpis.fuga_estimada_mes_pen },
-    { etiqueta: "Facturas fuera de AMDOCS", valor: r.monto_oculto_pen },
+    { etiqueta: "Fuga por no facturar", valor: kpis.fuga_estimada_mes_pen, nota: "al mes" },
+    { etiqueta: "Facturación en ISIS no consolidada", valor: r.monto_oculto_pen },
     { etiqueta: "Sin identificar de verdad", valor: kpis.monto_sin_identificar_pen },
   ];
   return (
@@ -251,6 +253,11 @@ function Partidas({ kpis }: { kpis: Kpis }) {
           >
             {f.etiqueta}
           </span>
+          {/* El periodo va como nota y no dentro del nombre: el nombre del
+              hallazgo tiene que ser idéntico al del KPI y al de la alerta. */}
+          {"nota" in f && f.nota && (
+            <span className="shrink-0 text-[10px] text-[var(--color-tinta-3)]">{f.nota}</span>
+          )}
           <span
             className="cifra shrink-0 font-[family-name:var(--font-mono)] text-[11.5px]"
             style={{ color: f.acento ? "var(--color-rampa-2)" : "var(--color-tinta)" }}

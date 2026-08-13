@@ -27,7 +27,7 @@ const SUGERIDAS = [
   { texto: "¿Qué cuentas activas no se están facturando?", pista: "fuga de ingresos" },
   { texto: "¿A quién le cobro primero?", pista: "mesa de recupero" },
   {
-    texto: "Proyéctame la cartera a diciembre con 10% de mora",
+    texto: "Proyéctame la cartera vencida a diciembre con 10% de mora",
     pista: "aquí el guardarraíl no inventa",
     trampa: true,
   },
@@ -412,9 +412,12 @@ function Procedencia({ r, sinLlm }: { r: RespuestaChat; sinLlm?: boolean }) {
  * Ese titular es un rótulo, no una frase, y como parte del párrafo estorba.
  */
 function separarTitular(texto: string): { titulo: string; cuerpo: string } {
-  const m = texto.match(/^([A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ0-9\s↔/·-]{6,}?)(?=\s[a-z(—]|[.,])/);
+  const m = texto.match(/^([A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ0-9\s↔/·-]{6,}?)(?=\s[a-z(—·]|[.,])/);
   if (!m) return { titulo: "", cuerpo: texto };
-  const titulo = (m[1] ?? "").trim().replace(/[.,]$/, "");
-  const cuerpo = texto.slice(m[0].length).replace(/^[.,\s—]+/, "");
+  // El separador se limpia de los dos lados. El punto medio está DENTRO de la
+  // clase de caracteres porque hay titulares que lo llevan de verdad
+  // ("CONCILIACIÓN PAGO ↔ FACTURA"), así que puede quedar colgando al final.
+  const titulo = (m[1] ?? "").trim().replace(/[.,·\-/]+$/, "").trim();
+  const cuerpo = texto.slice(m[0].length).replace(/^[.,\s—·]+/, "");
   return titulo.split(/\s+/).length >= 2 ? { titulo, cuerpo } : { titulo: "", cuerpo: texto };
 }

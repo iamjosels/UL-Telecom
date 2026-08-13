@@ -160,7 +160,7 @@ def main() -> int:
         print("=" * 96)
         return 1
 
-    print(c("  PARIDAD OK — 9 cifras de CONTEXT.md reproducidas.", VERDE))
+    print(c("  PARIDAD OK · 9 cifras de CONTEXT.md reproducidas.", VERDE))
     print(f"  {len(cmp.avisos)} diferencias documentadas y explicadas arriba.")
     print("=" * 96)
     return 0
