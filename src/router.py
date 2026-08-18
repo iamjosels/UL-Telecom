@@ -24,7 +24,7 @@ import re
 from pydantic import BaseModel, Field
 
 from src.contracts import ResultadoTool, ahora
-from src.tools.registro import catalogo_texto, ejecutar
+from src.tools.registro import catalogo_texto, ejecutar, ultimos
 from src.tools.registro import _ESPECS as ESPECS  # whitelist viva
 from src.voz import VOZ_ANALISTA, limpiar_relleno
 
@@ -48,6 +48,12 @@ REGLAS: list[tuple[int, str, str, dict]] = [
      {"tramo": "90+"}),
     (3, r"(cartera|vencid|aging|por cobrar|deuda|cxc|cuentas por cobrar|morosidad)",
      "cartera_vencida", {}),
+    # Un tramo de aging escrito tal cual sólo existe en la cartera, así que
+    # "¿y el 31-60?" es una pregunta completa aunque no diga "cartera". Sin
+    # esto se resolvía heredando la herramienta del turno anterior, que podía
+    # no tener tramos: entonces no cambiaba ningún argumento y devolvía el
+    # mismo párrafo palabra por palabra.
+    (4, r"\b(?:1-30|31-60|61-90)\b|\b90\s*\+", "cartera_vencida", {}),
     (4, r"((activ\w+|servicio\w*|cuenta\w*)[^.]{0,30}(no|sin)[^.]{0,20}factur|fuga|"
         r"no se (est[áa]n? )?factur|sin facturar)",
      "detectar_servicios_no_facturados", {}),
@@ -465,6 +471,133 @@ def supuesto_no_soportado(pregunta: str) -> str | None:
     return None
 
 
+# --------------------------------------------------------------------------- #
+# Preguntas sobre la respuesta anterior
+# --------------------------------------------------------------------------- #
+#
+# "¿y para qué me sirven esos datos?" no pide otra consulta: pide la lectura de
+# la que acaba de darse. Tratada como un seguimiento normal, heredaba la
+# herramienta anterior, la volvía a ejecutar y devolvía el MISMO párrafo palabra
+# por palabra -- que delante de alguien se lee como que el sistema no escucha.
+#
+# La respuesta no se recalcula: se reutiliza el resultado que ya está en el
+# registro. Lo que cambia es qué se contesta con él.
+
+RE_INTERPRETACION = re.compile(
+    r"(para\s+qu[ée]\s+(?:me\s+)?(?:sirve|sirven|vale|valen)|"
+    r"qu[ée]\s+(?:significa|significan|quiere\s+decir|implica|implican)|"
+    r"expl[íi]ca|expl[íi]came|c[óo]mo\s+(?:lo\s+)?interpreto|qu[ée]\s+conclusi[óo]n|"
+    r"qu[ée]\s+(?:hago|hacemos|habr[íi]a\s+que\s+hacer)|qu[ée]\s+(?:me\s+)?recomiendas|"
+    r"por\s+qu[ée]\s+(?:pasa|ocurre|sucede|es\s+as[íi])|"
+    r"eso\s+es\s+(?:mucho|poco|grave|normal|malo|bueno)|es\s+(?:mucho|grave|normal)\?|"
+    r"y\s+(?:eso|esto)\b|qu[ée]\s+more?\b)",
+    re.IGNORECASE,
+)
+
+PROMPT_LECTURA = (
+    "Eres un analista del ciclo de ingresos B2B de una telco peruana. El usuario pregunta "
+    "por un resultado que YA está calculado y que tiene delante.\n"
+    "Responde EXACTAMENTE lo que pregunta, en 2 a 4 frases. No repitas el resumen: ya lo ha "
+    "leído. Si pregunta para qué sirve o qué hacer, di qué decisión habilita y quién la "
+    "ejecuta.\n"
+    "REGLA ABSOLUTA: usa ÚNICAMENTE las cifras del bloque. Está prohibido calcular, estimar "
+    "o añadir números que no estén ahí.\n"
+    "\n" + VOZ_ANALISTA
+)
+
+
+def _es_interpretacion(pregunta: str, contexto: dict | None) -> bool:
+    """¿Pregunta por la respuesta anterior en vez de por un dato nuevo?
+
+    Pide las tres cosas a la vez: que haya una respuesta anterior, que las
+    reglas no reconozcan una pregunta de datos (para no robarle "¿por qué la
+    cartera está tan alta?", que sí tiene herramienta) y que suene a lectura.
+    """
+    if not contexto or contexto.get("tool") not in ESPECS:
+        return False
+    if clasificar_por_reglas(pregunta) is not None:
+        return False
+    return bool(RE_INTERPRETACION.search(pregunta))
+
+
+def _acciones_de(res: ResultadoTool) -> str:
+    """La lectura sin modelo: qué se hace con esto y quién lo hace.
+
+    Sale de las alertas de la herramienta, que ya traen acción, responsable e
+    impacto. No es un premio de consolación por no tener LLM: es la respuesta
+    literal a "¿para qué me sirve?", y encima es determinista.
+    """
+    conImpacto = sorted(res.alertas, key=lambda a: a.impacto_pen, reverse=True)[:3]
+    lineas = []
+    for a in conImpacto:
+        pieza = a.titulo
+        if a.impacto_pen:
+            pieza += f" — S/{a.impacto_pen:,.2f}"
+        if a.accion:
+            pieza += f". {a.accion}"
+        if a.responsable:
+            pieza += f" ({a.responsable})"
+        lineas.append(pieza)
+    return "\n".join(lineas)
+
+
+def _interpretar(pregunta: str, contexto: dict, llm=None) -> dict:
+    """Contesta sobre el resultado anterior sin volver a calcularlo."""
+    tool = contexto["tool"]
+    res = ultimos().get(tool)
+    if res is None or not res.ok:
+        # El proceso pudo reiniciarse entre una pregunta y la siguiente. Se
+        # rehace la consulta: es determinista, así que sale lo mismo.
+        res = ejecutar(tool, origen=AGENTE, **(contexto.get("args") or {}))
+
+    acciones = _acciones_de(res)
+    texto = acciones or (
+        f"Es el resultado de {ESPECS[tool].etiqueta.lower()}: "
+        f"{ESPECS[tool].descripcion}"
+    )
+    redactado = False
+
+    if llm is not None and res.ok:
+        try:
+            propuesta = str(
+                llm.call([
+                    {"role": "system", "content": PROMPT_LECTURA},
+                    {"role": "user", "content": (
+                        f"PREGUNTA: {pregunta}\n\n"
+                        f"RESULTADO YA CALCULADO:\n{res.resumen}\n\n"
+                        f"MÉTRICAS: {json.dumps(res.metricas, ensure_ascii=False, default=str)}\n\n"
+                        f"ACCIONES Y RESPONSABLES:\n{acciones or '(ninguna)'}"
+                    )},
+                ])
+            ).strip()
+            if propuesta and not numeros_inventados(propuesta, res):
+                texto, redactado = limpiar_relleno(propuesta), True
+        except Exception:
+            pass
+
+    return {
+        "respuesta": texto,
+        "tool": tool,
+        "args": contexto.get("args") or {},
+        "via": "interpretacion",
+        "confianza": 0.6,
+        "clase": None,
+        "sugerencias": [],
+        "redactado_por_llm": redactado,
+        "redaccion_descartada": False,
+        "supuesto_ignorado": None,
+        "metricas": res.metricas,
+        "trazas": res.trazas,
+        "alertas": [
+            {"severidad": a.severidad, "titulo": a.titulo, "impacto_pen": a.impacto_pen}
+            for a in res.alertas
+        ],
+        "filas_detalle": res.data_filas_totales,
+        "ok": res.ok,
+        "ts": ahora(),
+    }
+
+
 PROMPT_REDACTOR = (
     "Eres un analista del ciclo de ingresos B2B de una telco peruana. Respondes en español, en "
     "2 a 4 frases.\n"
@@ -511,6 +644,12 @@ def responder(pregunta: str, llm=None, contexto: dict | None = None) -> dict:
     if (social := charla(pregunta)) is not None:
         clase, texto = social
         return _sin_datos(texto, clase)
+
+    # "¿y para qué me sirven esos datos?" pide la lectura de lo ya contestado,
+    # no otra consulta. Va antes de clasificar porque si no se resuelve como un
+    # seguimiento y devuelve el mismo párrafo otra vez.
+    if _es_interpretacion(pregunta, contexto):
+        return _interpretar(pregunta, contexto or {}, llm)
 
     intencion = clasificar(pregunta, llm, contexto)
 

@@ -250,13 +250,20 @@ function TurnoChat({
 }) {
   const [verTrazas, setVerTrazas] = useState(false);
   const r = turno.respuesta;
-  const cifras = r && r.tool ? destacadosDe(r.tool, r.metricas) : [];
+  // Una lectura de la respuesta anterior no repite ni el titular ni las
+  // cifras: acaban de verse dos líneas más arriba, y volver a pintarlas es lo
+  // que hacía que la respuesta pareciera la misma de antes.
+  const lectura = r?.via === "interpretacion";
+  const cifras = r && r.tool && !lectura ? destacadosDe(r.tool, r.metricas) : [];
   // Sin herramienta no hay titular que separar: el texto es una frase, no el
   // resumen con rótulo en mayúsculas que devuelven las tools.
-  const separado = r?.tool ? separarTitular(r.respuesta) : { titulo: "", cuerpo: r?.respuesta ?? "" };
+  const separado =
+    r?.tool && !lectura
+      ? separarTitular(r.respuesta)
+      : { titulo: "", cuerpo: r?.respuesta ?? "" };
   // Si redactó el LLM no hay titular dentro del texto: se repone el de la
   // herramienta para que todas las respuestas tengan la misma forma.
-  const titulo = separado.titulo || (r?.tool ? (TITULOS[r.tool] ?? "") : "");
+  const titulo = separado.titulo || (r?.tool && !lectura ? (TITULOS[r.tool] ?? "") : "");
   const cuerpo = separado.cuerpo;
   // Cuando no se consultó nada, el filete no puede ir del color de un dato.
   // Ámbar para lo que el sistema no supo resolver; apagado para la charla.
@@ -457,6 +464,11 @@ function Procedencia({ r, sinLlm }: { r: RespuestaChat; sinLlm?: boolean }) {
       {r.via === "seguimiento" && (
         <span className="text-[10px] text-[var(--color-tinta-3)]">
           sigue la pregunta anterior
+        </span>
+      )}
+      {r.via === "interpretacion" && (
+        <span className="text-[10px] text-[var(--color-tinta-3)]">
+          lectura de la respuesta anterior, sin recalcular
         </span>
       )}
       {r.filas_detalle > 0 &&

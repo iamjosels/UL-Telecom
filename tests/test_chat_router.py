@@ -74,7 +74,23 @@ def test_reglas_devuelven_none_cuando_no_reconocen():
 
 
 def test_seguimiento_hereda_la_herramienta_anterior():
-    """«¿y el tramo 31-60?» no dice de qué habla; el turno anterior sí."""
+    """«¿y en móvil?» no dice de qué habla; el turno anterior sí.
+
+    La elipsis es de verdad: no lleva ni una palabra que ninguna regla
+    reconozca, así que sin el contexto no hay forma de resolverla.
+    """
+    previo = responder("¿Qué cuentas activas no se están facturando?")
+    ctx = {"pregunta": "¿Qué cuentas activas no se están facturando?",
+           "tool": previo["tool"], "args": previo["args"]}
+
+    r = responder("¿y en móvil?", contexto=ctx)
+
+    assert r["tool"] == "detectar_servicios_no_facturados"
+    assert r["via"] == "seguimiento"
+
+
+def test_un_tramo_nuevo_pisa_al_heredado():
+    """Si el seguimiento trae su propio tramo, manda el nuevo."""
     previo = responder("¿Cuánto tenemos por cobrar a más de 90 días?")
     assert previo["args"] == {"tramo": "90+"}
 
@@ -83,13 +99,24 @@ def test_seguimiento_hereda_la_herramienta_anterior():
     r = responder("¿y el tramo 31-60?", contexto=ctx)
 
     assert r["tool"] == "cartera_vencida"
-    assert r["via"] == "seguimiento"
-    assert r["args"]["tramo"] == "31-60", "el tramo nuevo pisa al heredado"
+    assert r["args"]["tramo"] == "31-60"
+
+
+def test_un_tramo_suelto_se_entiende_solo():
+    """El aging sólo existe en la cartera, así que «¿y el 31-60?» basta.
+
+    Sin esta regla la pregunta heredaba la herramienta del turno anterior. Si
+    esa no tenía tramos, no cambiaba ningún argumento y el chat devolvía el
+    párrafo de antes palabra por palabra.
+    """
+    r = responder("¿y el 31-60?")
+    assert r["tool"] == "cartera_vencida"
+    assert r["args"]["tramo"] == "31-60"
 
 
 def test_seguimiento_sin_contexto_no_inventa():
-    """La misma pregunta suelta no puede resolverse, y se dice."""
-    r = responder("¿y el tramo 31-60?")
+    """Una elipsis sin turno previo no puede resolverse, y se dice."""
+    r = responder("¿y eso?")
     assert r["clase"] == "no_entendida"
 
 
@@ -98,9 +125,45 @@ def test_no_hereda_argumentos_de_otra_herramienta():
     ctx = {"pregunta": "¿qué cuentas no se facturan?",
            "tool": "detectar_servicios_no_facturados",
            "args": {"incluir_suspendidos": True}}
-    r = responder("¿y eso?", contexto=ctx)
+    r = responder("¿y en móvil?", contexto=ctx)
     assert r["tool"] == "detectar_servicios_no_facturados"
     assert set(r["args"]) <= {"incluir_suspendidos", "fecha_corte"}
+
+
+# --------------------------------------------------------------------------- #
+# Preguntas sobre la respuesta anterior
+# --------------------------------------------------------------------------- #
+
+
+def test_interpretacion_no_repite_la_respuesta():
+    """«¿y para qué me sirven esos datos?» pedía la lectura y devolvía el mismo
+    párrafo entero, porque se resolvía como un seguimiento normal."""
+    previo = responder("¿Qué cuentas activas no se están facturando?")
+    ctx = {"pregunta": "¿Qué cuentas activas no se están facturando?",
+           "tool": previo["tool"], "args": previo["args"]}
+
+    r = responder("¿y para qué me sirven esos datos?", contexto=ctx)
+    assert r["via"] == "interpretacion"
+    assert r["tool"] == previo["tool"], "sigue anclada al mismo resultado"
+    assert r["respuesta"] != previo["respuesta"]
+
+
+def test_interpretacion_responde_con_accion_y_responsable():
+    """Sin modelo, la lectura sale de las alertas: qué se hace y quién lo hace.
+    No es un premio de consolación, es la respuesta literal a la pregunta."""
+    previo = responder("¿Qué cuentas activas no se están facturando?")
+    ctx = {"pregunta": "x", "tool": previo["tool"], "args": previo["args"]}
+    r = responder("¿qué hago con eso?", contexto=ctx)
+    assert "Facturación" in r["respuesta"] or "TI" in r["respuesta"]
+
+
+def test_interpretacion_no_le_roba_las_preguntas_con_datos():
+    """«¿por qué la cartera está tan alta?» lleva 'por qué' y lleva 'cartera'.
+    Manda la herramienta: hay un dato que responderla."""
+    ctx = {"pregunta": "x", "tool": "resumen_facturacion", "args": {}}
+    r = responder("¿por qué la cartera está tan alta?", contexto=ctx)
+    assert r["tool"] == "cartera_vencida"
+    assert r["via"] != "interpretacion"
 
 
 # --------------------------------------------------------------------------- #

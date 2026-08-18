@@ -65,6 +65,28 @@ from src.tools import registro  # noqa: E402
 
 _LOG = logging.getLogger("sonia.api")
 
+
+def _precalentar_llm() -> None:
+    """Importa CrewAI en segundo plano, nada más arrancar.
+
+    `src.agents` tarda diecinueve segundos en importarse y ese coste lo pagaba
+    entera la PRIMERA pregunta del chat, dentro de su petición. El tablero
+    corta a los 15 s y reintenta sin modelo, así que la primera respuesta salía
+    siempre como volcado de la herramienta — justo la que más se mira.
+
+    En un hilo daemon: si falla o tarda, el arranque y el healthcheck no se
+    enteran. Y no se hace si no hay clave, porque entonces no se va a usar.
+    """
+    if not clave_groq():
+        return
+    try:
+        import src.agents  # noqa: F401, PLC0415
+    except Exception:  # noqa: BLE001
+        _LOG.warning("No se pudo precalentar la capa de agentes", exc_info=True)
+
+
+threading.Thread(target=_precalentar_llm, name="precalentar-llm", daemon=True).start()
+
 app = FastAPI(
     title="SON-IA",
     description=(

@@ -272,7 +272,7 @@ export interface RespuestaChat {
   /** Cadena vacía cuando no se ejecutó ninguna herramienta. */
   tool: string;
   args: Record<string, unknown>;
-  via: "keywords" | "llm" | "seguimiento" | "sin_tool";
+  via: "keywords" | "llm" | "seguimiento" | "interpretacion" | "sin_tool";
   confianza: number;
   /** Null en una respuesta normal con datos. */
   clase?: ClaseChat | null;
