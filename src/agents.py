@@ -4,20 +4,21 @@ SON-IA · Definición de los agentes.
 Tres agentes operadores especializados y un supervisor que asigna, controla y
 da seguimiento — la arquitectura que pide la ficha del reto.
 
-Asignación de modelo: los cuatro agentes usan por defecto el modelo de
-razonamiento, y la razón es contraintuitiva. En el plan gratuito de Groq el
-límite de tokens por minuto va **por modelo**, y el modelo pequeño tiene la
-MITAD de presupuesto que el grande:
+Asignación de modelo. En el plan gratuito de Groq el límite de tokens por
+minuto va **por modelo**, así que repartir agentes entre dos modelos no es un
+lujo: son dos bolsas de cuota en lugar de una.
 
-    llama-3.1-8b-instant     6.000 TPM
-    llama-3.3-70b-versatile 12.000 TPM
+    openai/gpt-oss-120b   8.000 TPM   supervisor y BI
+    openai/gpt-oss-20b    8.000 TPM   facturación, cobranzas y chat
 
 Como cada turno de un agente reenvía todo su bloc de notas, una petición pesa
-~2.200 tokens y con 6.000 TPM sólo caben dos o tres por minuto: el modelo
-"rápido" agotaba su cuota a mitad del cierre. Medido: con el 8b la corrida
-terminaba en modo degradado; con el 70b completa en ~70 s.
+~2.200 tokens, y los gpt-oss suman encima sus tokens de razonamiento. Con 8.000
+TPM el supervisor agota la bolsa del 120b antes de cerrar los once pasos: la
+corrida acaba en modo híbrido, con la red de seguridad completando lo que falte.
+Eso no es un fallo del cierre — es el escenario que la red existe para cubrir, y
+las cifras salen idénticas a la corrida determinista.
 
-Quien tenga plan de pago puede volver a repartir con SONIA_MODELO_RAPIDO.
+Quien tenga plan de pago puede repartir distinto con SONIA_MODELO_RAPIDO.
 
 Los goals repiten la misma instrucción en los tres: las cifras se citan tal como
 las devuelve la herramienta, nunca se recalculan. Es redundante a propósito —
@@ -33,18 +34,38 @@ import time
 
 from crewai import LLM, Agent
 
+from src.proveedor import clave_groq, sondear_groq
 from src.tools import registro
 from src.tools.crew_adapters import tools_de
 
 _LOG = logging.getLogger("sonia.agents")
 
-# Modelos verificados como vigentes en producción en Groq.
-# Ambos apuntan al 70b por el reparto de TPM explicado arriba; son variables
-# distintas para poder separarlos sin tocar código si se sube de plan.
-MODELO_RAZONAMIENTO = os.getenv("SONIA_MODELO_POTENTE", "llama-3.3-70b-versatile")
-MODELO_RAPIDO = os.getenv("SONIA_MODELO_RAPIDO", "llama-3.3-70b-versatile")
+# Modelos verificados como vigentes en producción en Groq (2026-08-17).
+#
+# Los llama-3.x salieron del catálogo: la API responde `model_not_found` para
+# llama-3.3-70b-versatile y llama-3.1-8b-instant. Los sustituyen los gpt-oss,
+# que son los que quedan con tool-calling utilizable. El qwen3.6-27b se
+# descartó porque escupe su bloque <think> dentro del contenido, y eso acaba
+# en el informe.
+#
+# Reparto: el 120b para quien razona (supervisor y BI) y el 20b para los dos
+# especialistas. No es solo por capacidad — el límite de TPM es POR MODELO, así
+# que separarlos son dos bolsas en vez de una.
+MODELO_RAZONAMIENTO = os.getenv("SONIA_MODELO_POTENTE", "openai/gpt-oss-120b")
+MODELO_RAPIDO = os.getenv("SONIA_MODELO_RAPIDO", "openai/gpt-oss-20b")
 
 _RE_ESPERA = re.compile(r"try again in ([\d.]+)s", re.IGNORECASE)
+
+
+def estado_de_groq() -> tuple[bool, str, str]:
+    """¿Se puede usar Groq con los modelos que este módulo tiene configurados?
+
+    El sondeo vive en `src.proveedor` porque quien más lo necesita — la API, al
+    decidir si hay LLM — no puede pagar los diecinueve segundos que cuesta
+    importar CrewAI. Aquí sólo se le dicen los tres modelos que hay que buscar
+    en el catálogo.
+    """
+    return sondear_groq({MODELO_RAZONAMIENTO, MODELO_RAPIDO, MODELO_CHAT})
 
 
 def _segundos_de_espera(mensaje: str, defecto: float = 20.0) -> float:
@@ -121,11 +142,14 @@ class LLMGroq(LLM):
         raise ultimo  # type: ignore[misc]
 
 
-#: Reintentos ante error 429. El plan gratuito de Groq limita a 12.000 tokens
-#: por minuto en llama-3.3-70b y la delegación jerárquica lo alcanza con
-#: facilidad, porque el supervisor reenvía el contexto acumulado en cada vuelta.
+#: Reintentos ante error 429. El plan gratuito de Groq da 8.000 tokens por
+#: minuto en gpt-oss-120b (eran 12.000 con el 70b, así que ahora se llega antes)
+#: y la delegación jerárquica lo alcanza con facilidad, porque el supervisor
+#: reenvía el contexto acumulado en cada vuelta. Los gpt-oss además gastan
+#: tokens de razonamiento que también cuentan.
 #: El propio error indica el tiempo de espera ("try again in 1.6s"), así que
-#: LiteLLM reintenta con backoff y la corrida se recupera sola.
+#: LiteLLM reintenta con backoff y la corrida se recupera sola. Cuando ni así
+#: llega, la red de seguridad completa los pasos y el cierre termina igual.
 REINTENTOS = int(os.getenv("SONIA_REINTENTOS_LLM", "5"))
 
 #: Peticiones por minuto. Espaciarlas deja que la ventana de TPM se recupere.
@@ -141,7 +165,7 @@ def _llm(modelo: str, max_tokens: int = 900, temperatura: float = 0.1) -> LLM:
     """
     return LLMGroq(
         model=f"groq/{modelo}",
-        api_key=os.getenv("GROQ_API_KEY"),
+        api_key=clave_groq(),
         temperature=temperatura,
         max_tokens=max_tokens,
         num_retries=REINTENTOS,  # se reenvía a LiteLLM vía additional_params
@@ -163,9 +187,14 @@ def llm_potente() -> LLM:
 #: la redacción nunca llega: la respuesta cae siempre al camino determinista y
 #: el guardarraíl no se puede demostrar en vivo.
 #:
-#: El prompt del chat es corto, así que el modelo pequeño va sobrado y además
-#: tiene su propia bolsa de 6.000 TPM, intacta tras el cierre.
-MODELO_CHAT = os.getenv("SONIA_MODELO_CHAT", "llama-3.1-8b-instant")
+#: El prompt del chat es corto, así que el modelo pequeño va sobrado.
+#:
+#: Matiz desde que se cambió de familia: el chat comparte el 20b con los dos
+#: especialistas, no tiene bolsa propia como cuando era el 8b. Lo que lo salva
+#: es que quien agota la cuota en un cierre es el supervisor, y ese va en el
+#: 120b. Comprobado el 2026-08-17: preguntando por el chat inmediatamente
+#: después de un cierre, la redacción del LLM llega y pasa el guardarraíl.
+MODELO_CHAT = os.getenv("SONIA_MODELO_CHAT", "openai/gpt-oss-20b")
 
 
 def llm_chat() -> LLM:

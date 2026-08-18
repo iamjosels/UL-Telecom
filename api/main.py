@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import os
 import shutil
@@ -57,9 +58,12 @@ from src.data_loader import (  # noqa: E402
     usar_origen,
 )
 from src.plan import OBJETIVO_DEMO, PLAN_DE_CIERRE  # noqa: E402
+from src.proveedor import clave_groq, motivo_humano  # noqa: E402 — ligero, sin CrewAI
 from src.reporte import kpis_dashboard  # noqa: E402
 from src.router import responder  # noqa: E402
 from src.tools import registro  # noqa: E402
+
+_LOG = logging.getLogger("sonia.api")
 
 app = FastAPI(
     title="SON-IA",
@@ -113,7 +117,12 @@ def raiz() -> dict:
     return {
         "servicio": "SON-IA",
         "estado": "ok",
-        "llm_configurado": bool(os.getenv("GROQ_API_KEY")),
+        # `clave_groq()` y no `os.getenv`: una clave con comillas o con el salto
+        # de línea del copiar y pegar no está configurada, está rota, y decir
+        # aquí que sí lo está manda a buscar el fallo al sitio equivocado.
+        # Aquí no se sondea a Groq: esto es el healthcheck y tiene que ser
+        # instantáneo.
+        "llm_configurado": bool(clave_groq()),
         "endpoints": ["/run (SSE)", "/chat", "/kpis", "/tools", "/auditoria", "/docs"],
     }
 
@@ -344,13 +353,18 @@ def datos_restaurar() -> dict:
 def chat(peticion: PeticionChat) -> dict:
     """Pregunta en lenguaje natural. El LLM elige la tool y redacta; nunca calcula."""
     llm = None
-    if peticion.usar_llm and os.getenv("GROQ_API_KEY"):
+    if peticion.usar_llm and clave_groq():
         try:
-            from src.agents import llm_chat
+            from src.agents import estado_de_groq, llm_chat
 
-            # Modelo aparte del que usan los agentes: su cuota de tokens por
-            # minuto es independiente y sigue intacta después de un cierre.
-            llm = llm_chat()
+            # Si Groq no está utilizable se contesta con el resumen
+            # determinista y ya está. Sin esta comprobación, cada pregunta
+            # gastaba dos viajes de ida y vuelta condenados a fallar antes de
+            # llegar a la misma respuesta.
+            if estado_de_groq()[0]:
+                # Modelo aparte del que usan los agentes: su cuota de tokens por
+                # minuto es independiente y sigue intacta después de un cierre.
+                llm = llm_chat()
         except Exception:
             llm = None
     return responder(peticion.mensaje, llm=llm)
@@ -386,7 +400,7 @@ async def run(peticion: PeticionRun, request: Request):
             # empezar. Se limpia aquí, dentro del candado, no en el endpoint.
             registro.reiniciar_cancelacion()
             try:
-                if peticion.deterministico or not os.getenv("GROQ_API_KEY"):
+                if peticion.deterministico or not clave_groq():
                     from src.pipeline import ejecutar_plan
 
                     salida = ejecutar_plan(
@@ -430,7 +444,14 @@ async def run(peticion: PeticionRun, request: Request):
                 if registro.cancelacion_pedida():
                     emitir({"tipo": "cancelado", "mensaje": "Cierre detenido."})
                 else:
-                    emitir({"tipo": "error", "mensaje": f"{type(e).__name__}: {e}"})
+                    # El volcado de LiteLLM son varias líneas con el JSON de
+                    # Groq dentro; en pantalla se pone la causa en una frase y
+                    # el original se deja en el log del servidor.
+                    _LOG.exception("El cierre se interrumpió")
+                    emitir({
+                        "tipo": "error",
+                        "mensaje": f"El cierre se interrumpió: {motivo_humano(e)}.",
+                    })
             finally:
                 # El evento "fin" lo emite el centinela al final del generador,
                 # así el cliente recibe exactamente uno.

@@ -146,9 +146,13 @@ def main() -> int:
     emitir = hacer_emisor(args.lento)
     registro.suscribir(emitir)
 
-    hay_key = bool(os.getenv("GROQ_API_KEY"))
+    # Saneada: una clave con comillas o con el salto de línea del copiar y
+    # pegar no sirve, y aquí vale más decirlo antes de arrancar.
+    from src.proveedor import clave_groq
+
+    hay_key = bool(clave_groq())
     if not args.deterministico and not hay_key:
-        print(c("\n  [!] No hay GROQ_API_KEY en el entorno.", "rojo"))
+        print(c("\n  [!] No hay una GROQ_API_KEY utilizable en el entorno.", "rojo"))
         print(c("      Ejecutando en modo determinista: las cifras son las mismas,", "gris"))
         print(c("      lo único que falta es la narrativa redactada por el LLM.\n", "gris"))
 

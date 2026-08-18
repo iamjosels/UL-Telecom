@@ -6,13 +6,16 @@ que depende de que un LLM remoto se porte bien no es un demo: el plan gratuito
 de Groq limita por tokens/minuto, la delegación jerárquica puede entrar en
 bucle y un tool-call malformado tumba la corrida.
 
-Por eso `ejecutar_cierre()` tiene tres propiedades deliberadas:
+Por eso `ejecutar_cierre()` tiene cuatro propiedades deliberadas:
 
-  1. Si no hay GROQ_API_KEY, va directo al camino determinista.
+  1. Se sondea Groq ANTES de empezar. Si la clave no sirve o el modelo ya no
+     está en el catálogo, se va directo al camino determinista en dos segundos
+     y con un aviso que dice cuál de las dos cosas pasó.
   2. El crew corre en un hilo con timeout. Si falla o se cuelga, se sigue.
   3. Lo que el crew SÍ logró se conserva: sólo se rellenan los pasos que
      faltaron. Un fallo parcial deja igualmente trabajo real de los agentes en
      pantalla, y el informe sale completo.
+  4. Lo que falla se cuenta por su causa, no por el nombre de la excepción.
 
 En los tres casos el informe se arma con `render_reporte()` sobre el registro de
 resultados, así que las cifras son idénticas: lo único que cambia es si hay o no
@@ -33,7 +36,9 @@ from src.agents import (
     agente_cobranzas,
     agente_facturacion,
     agente_supervisor,
+    estado_de_groq,
 )
+from src.proveedor import es_fallo_de_clave, motivo_humano
 from src.audit import audit
 from src.pipeline import ejecutar_pasos
 from src.plan import FECHA_CORTE, OBJETIVO_DEMO, PLAN_DE_CIERRE
@@ -174,16 +179,29 @@ def _consolidar_con_supervisor(salidas: list[str], emitir: Emisor = None) -> str
             raise
         except Exception as e:  # noqa: BLE001
             ultimo = e
+            # El segundo intento existe para la cuota, que es POR MODELO. Si lo
+            # que falla es la clave, el modelo pequeño usa esa misma clave: sólo
+            # añade una espera y un segundo error idéntico en pantalla.
+            if es_fallo_de_clave(e):
+                break
 
-    _aviso(emitir, f"El supervisor no pudo consolidar ({type(ultimo).__name__ if ultimo else 'sin salida'}). "
+    _aviso(emitir, f"El supervisor no pudo consolidar: {motivo_humano(ultimo)}. "
                    "El informe sale igual con las cifras deterministas.")
     return None
 
 
-def _aviso(emitir: Emisor, mensaje: str) -> None:
+def _aviso(emitir: Emisor, mensaje: str, detalle: str = "") -> None:
+    """El aviso va a pantalla; el detalle técnico se queda en la auditoría.
+
+    Separarlos no es cosmética: el volcado de LiteLLM ocupa varias líneas y
+    lleva dentro el JSON de Groq. En la auditoría es justo lo que hace falta
+    para depurar, y en el tablero es ruido delante de quien esté mirando.
+    """
     if emitir:
         emitir({"tipo": "aviso", "mensaje": mensaje})
-    audit.registrar_agente("SUPERVISOR", "aviso", mensaje)
+    audit.registrar_agente(
+        "SUPERVISOR", "aviso", f"{mensaje} | {detalle}" if detalle else mensaje
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -343,8 +361,14 @@ def ejecutar_cierre(
     """Corre el cierre con agentes; completa de forma determinista si hace falta."""
     from src.pipeline import ejecutar_plan  # import diferido: evita ciclo
 
-    if not os.getenv("GROQ_API_KEY"):
-        _aviso(emitir, "Sin GROQ_API_KEY: modo determinista (mismas cifras, sin narrativa LLM).")
+    # Se comprueba Groq antes de empezar, no a mitad. El sondeo no gasta tokens
+    # y ahorra el peor final posible: tres agentes quemando reintentos contra
+    # una clave muerta para terminar en el mismo camino determinista, tres
+    # minutos después y con dos avisos rojos encima.
+    utilizable, motivo, detalle = estado_de_groq()
+    if not utilizable:
+        _aviso(emitir, f"{motivo} El cierre corre en modo determinista: "
+                       "mismas cifras, sin la narrativa del modelo.", detalle=detalle)
         return ejecutar_plan(emitir=emitir, modo="deterministico",
                              objetivo=objetivo, fecha_corte=fecha_corte)
 
@@ -368,6 +392,7 @@ def ejecutar_cierre(
             ] or [str(salida)]
         except BaseException as e:  # noqa: BLE001 — litellm lanza excepciones raras
             caja["error"] = f"{type(e).__name__}: {e}"
+            caja["excepcion"] = e
 
     hilo = threading.Thread(target=_worker, name="crew-sonia", daemon=True)
     hilo.start()
@@ -385,7 +410,10 @@ def ejecutar_cierre(
     if colgado:
         _aviso(emitir, f"El crew excedió {TIMEOUT_CREW_S}s. Completando de forma determinista.")
     elif "error" in caja:
-        _aviso(emitir, f"El crew falló ({caja['error']}). Completando de forma determinista.")
+        _aviso(emitir,
+               f"Los agentes no terminaron el cierre: {motivo_humano(caja.get('excepcion'))}. "
+               "Completando de forma determinista.",
+               detalle=caja["error"])
 
     # Rellenar SOLO lo que falte: el trabajo real de los agentes se conserva.
     ejecutadas = set(registro.ultimos())

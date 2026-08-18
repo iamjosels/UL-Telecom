@@ -26,8 +26,22 @@ services:
     envVars:
       # sync: false = Render la pide al desplegar y la guarda cifrada. Nunca
       # queda escrita en este archivo ni en el repositorio.
+      #
+      # Pégala sola, sin comillas y sin espacios: Groq responde a una clave con
+      # basura alrededor exactamente lo mismo que a una clave revocada.
       - key: GROQ_API_KEY
         sync: false
+
+      # Los modelos van explícitos y no por el valor por defecto del código.
+      # El catálogo de Groq se mueve — los llama-3.x se retiraron y las
+      # corridas empezaron a fallar sin que cambiara una línea del repositorio.
+      # Escritos aquí se corrigen desde el panel de Render, sin desplegar.
+      - key: SONIA_MODELO_POTENTE
+        value: openai/gpt-oss-120b
+      - key: SONIA_MODELO_RAPIDO
+        value: openai/gpt-oss-20b
+      - key: SONIA_MODELO_CHAT
+        value: openai/gpt-oss-20b
 
       # Sin esto Python bufferea la salida y los logs de Render van con retraso.
       - key: PYTHONUNBUFFERED

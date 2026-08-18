@@ -402,9 +402,17 @@ export default function App() {
 }
 
 /**
- * El backend reenvía el error tal cual se lo dio LiteLLM, que es un volcado de
- * varias líneas con el JSON de Groq dentro. Eso no puede aparecer en pantalla
- * durante una presentación: se traduce a una frase.
+ * Red de seguridad para lo que llegue en crudo.
+ *
+ * El backend ya manda los avisos redactados: sabe qué falló y lo cuenta en una
+ * frase. Esto queda para lo que se le escape, que es siempre un volcado de
+ * LiteLLM — varias líneas con el JSON de Groq dentro, impresentable delante de
+ * un jurado.
+ *
+ * Los patrones van contra el cuerpo del error de Groq y no contra el tipo de
+ * excepción, que engaña: una clave inválida llega como `BadRequestError`. Por
+ * eso este mismo texto no puede volver a traducirse aquí — si el mensaje ya
+ * viene en castellano, se pasa tal cual.
  */
 function humanizar(mensaje: string): string {
   if (/rate.?limit/i.test(mensaje)) {
@@ -413,7 +421,10 @@ function humanizar(mensaje: string): string {
   if (/invalid.?api.?key|authentication/i.test(mensaje)) {
     return "La clave de Groq no es válida. El cierre se completó sin LLM, con las mismas cifras.";
   }
-  if (/timeout|excedió/i.test(mensaje)) {
+  if (/model_not_found|does not exist/i.test(mensaje)) {
+    return "El modelo configurado ya no está en Groq. El cierre se completó sin LLM, con las mismas cifras.";
+  }
+  if (/timeout|timed out|excedió/i.test(mensaje)) {
     return "Los agentes tardaron más de la cuenta. El cierre se completó sin LLM, con las mismas cifras.";
   }
   const limpio = mensaje.split(/[\n{]/)[0]?.trim() ?? mensaje;
