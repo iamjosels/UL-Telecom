@@ -43,6 +43,14 @@ services:
       - key: SONIA_MODELO_CHAT
         value: openai/gpt-oss-20b
 
+      # El valor por defecto del codigo son 180 s, y en el plan gratuito de
+      # Render el cierre no llega: con los reintentos por cuota de Groq se
+      # agotan antes de que el supervisor redacte, asi que el informe salia
+      # siempre sin su lectura ejecutiva. Con 300 le da tiempo; si no llega
+      # tampoco, la red de seguridad completa igual y las cifras no cambian.
+      - key: SONIA_TIMEOUT_CREW
+        value: "300"
+
       # Sin esto Python bufferea la salida y los logs de Render van con retraso.
       - key: PYTHONUNBUFFERED
         value: "1"

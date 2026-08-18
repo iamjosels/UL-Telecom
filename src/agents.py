@@ -157,18 +157,32 @@ RPM_RAPIDO = int(os.getenv("SONIA_RPM_RAPIDO", "12"))
 RPM_POTENTE = int(os.getenv("SONIA_RPM_POTENTE", "8"))
 
 
-def _llm(modelo: str, max_tokens: int = 900, temperatura: float = 0.1) -> LLM:
+def _llm(
+    modelo: str,
+    max_tokens: int = 900,
+    temperatura: float = 0.1,
+    razonamiento: str | None = None,
+) -> LLM:
     """LLM de CrewAI apuntando a Groq vía LiteLLM.
 
     Temperatura baja: aquí no se busca creatividad sino que el agente transcriba
     con fidelidad lo que devolvió la herramienta.
+
+    `razonamiento` es el `reasoning_effort` de los gpt-oss. Importa más de lo
+    que parece: el razonamiento se descuenta del MISMO `max_tokens` que la
+    respuesta, así que un modelo que piensa de más se queda sin presupuesto y
+    devuelve `content` vacío — que es como CrewAI y el router ven "no hubo
+    respuesta". Medido con el mismo prompt: 395 tokens de salida por defecto
+    contra 114 en 'low', con el contenido igual de bueno.
     """
+    extra = {"reasoning_effort": razonamiento} if razonamiento else {}
     return LLMGroq(
         model=f"groq/{modelo}",
         api_key=clave_groq(),
         temperature=temperatura,
         max_tokens=max_tokens,
         num_retries=REINTENTOS,  # se reenvía a LiteLLM vía additional_params
+        **extra,
     )
 
 
@@ -198,7 +212,19 @@ MODELO_CHAT = os.getenv("SONIA_MODELO_CHAT", "openai/gpt-oss-20b")
 
 
 def llm_chat() -> LLM:
-    return _llm(MODELO_CHAT, max_tokens=500)
+    """El modelo del chat, con el razonamiento bajado a propósito.
+
+    El chat hace DOS llamadas por pregunta — enrutar y redactar — y las dos son
+    de transcribir, no de deducir: la tool se elige de un catálogo cerrado y la
+    redacción no puede añadir ni una cifra. Pensar de más ahí no mejora la
+    respuesta y cuesta el triple de tokens, que en el plan gratuito se traduce
+    en 429 encadenados y en una pregunta que tarda medio minuto en contestar
+    delante de quien mira.
+
+    Los agentes del cierre NO llevan esto: ahí el modelo sí decide qué
+    herramienta usar y en qué orden, y ese razonamiento se está pagando por algo.
+    """
+    return _llm(MODELO_CHAT, max_tokens=500, razonamiento="low")
 
 
 _REGLA_CIFRAS = (
