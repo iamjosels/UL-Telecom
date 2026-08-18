@@ -352,7 +352,16 @@ vez de caer a `resumen_facturacion` con confianza 0.2, que es lo que hacía ante
 fuera la respuesta. Contestar otra cosa con aplomo es peor que no contestar, porque quien
 pregunta no tiene forma de notarlo.
 
-**Preguntas que se apoyan en la anterior.** *«¿y el tramo 31-60?»* no dice sobre qué. El
+**Preguntas sobre la respuesta anterior.** *«¿y para qué me sirven esos datos?»* no pide otra
+consulta: pide la lectura de la que se acaba de dar. Tratada como un seguimiento normal
+heredaba la herramienta, la reejecutaba y devolvía el mismo párrafo palabra por palabra.
+`_interpretar()` reutiliza el resultado que ya está en el registro —**no recalcula**— y
+contesta la pregunta concreta. **Sin LLM la lectura sale de las alertas de la tool**, que ya
+traen `accion`, `responsable` e `impacto_pen`: es la respuesta literal a *«¿para qué me
+sirve?»*, y determinista. La rama solo entra si las reglas no reconocen una pregunta de
+datos, así que *«¿por qué la cartera está tan alta?»* sigue yendo a su herramienta.
+
+**Preguntas que se apoyan en la anterior.** *«¿y en móvil?»* no dice sobre qué. El
 tablero manda el turno previo (`{pregunta, tool, args}`) y el router hereda esa herramienta,
 pisando solo los argumentos que trae la pregunta nueva. Los argumentos heredados se filtran
 contra el esquema de la tool: el turno anterior pudo usar otra, y colar un argumento ajeno la
