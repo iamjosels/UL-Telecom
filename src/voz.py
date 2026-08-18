@@ -62,6 +62,22 @@ VOZ_ANALISTA = (
 
 import re
 
+#: Tipografía Unicode que los modelos meten sola y que delata texto de máquina.
+#:
+#: Los gpt-oss escriben "S/<espacio fino>1,234,567.89" (U+202F) y "2026‑08‑12"
+#: con guion de no separación (U+2011). Se lee casi igual, pero no es lo que
+#: teclea una persona y en una fuente sin ese glifo sale un recuadro. El
+#: guardarraíl no se entera: `RE_NUMERO` mira los dígitos, no lo que va delante.
+#:
+#: El guion largo (U+2014) NO entra aquí a propósito: la regla de conectores de
+#: más abajo lo convierte en punto y seguido, y necesita encontrarlo intacto.
+_TIPOGRAFIA: tuple[tuple[str, str], ...] = (
+    (" ", " "), (" ", " "), (" ", " "), (" ", " "),
+    ("‐", "-"), ("‑", "-"), ("‒", "-"), ("–", "-"),
+    ("‘", "'"), ("’", "'"), ("“", '"'), ("”", '"'),
+    ("…", "..."),
+)
+
 _MULETILLAS: tuple[tuple[re.Pattern[str], str], ...] = (
     # "..., lo que representa el 26.9%" -> "..., el 26.9%"
     (re.compile(r",?\s*lo que (?:representa|significa|equivale a|supone)\s+", re.IGNORECASE), ", "),
@@ -83,6 +99,14 @@ def limpiar_relleno(texto: str) -> str:
     """
     if not texto:
         return texto
+    for raro, llano in _TIPOGRAFIA:
+        texto = texto.replace(raro, llano)
+
+    # El espacio fino de arriba deja "S/ 47,819.06", y el formato del informe es
+    # "S/47,819.06" pegado (`formato.soles`). Una misma cifra escrita de dos
+    # maneras en la misma pantalla es exactamente lo que no queremos.
+    texto = re.sub(r"\bS/\s+(?=\d)", "S/", texto)
+
     for patron, reemplazo in _MULETILLAS:
         texto = patron.sub(reemplazo, texto)
 
