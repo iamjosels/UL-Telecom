@@ -20,7 +20,12 @@ from pydantic import BaseModel, Field, field_validator
 from src.contracts import MAX_FILAS_DETALLE, Alerta, ResultadoTool
 from src.data_loader import CORTE_DEL_DATASET, ORDEN_TRAMOS, TOL_SALDO, get_datos
 from src.formato import linea_aging, num, pct, pen, top_montos
-from src.tools.registro import ArgsConFechaCorte, booleano_tolerante, registrar
+from src.tools.registro import (
+    ArgsConFechaCorte,
+    booleano_tolerante,
+    registrar,
+    tramo_tolerante,
+)
 
 AGENTE = "AGENTE_COBRANZAS"
 
@@ -43,9 +48,14 @@ class ArgsConciliar(BaseModel):
 class ArgsCartera(ArgsConFechaCorte):
     tramo: str | None = Field(
         None,
-        description="Filtrar a un tramo de aging: '1-30', '31-60', '61-90' o '90+'. Opcional.",
+        description=(
+            "Filtrar a un tramo de aging: '1-30', '31-60', '61-90' o '90+'. Opcional: "
+            "omítelo para la cartera completa."
+        ),
     )
     conciliacion: str = Field("canonica", description="'canonica' o 'exacta'.")
+
+    _tramo = field_validator("tramo", mode="before")(tramo_tolerante)
 
     @field_validator("conciliacion", mode="before")
     @classmethod

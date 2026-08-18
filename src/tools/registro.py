@@ -141,6 +141,50 @@ def booleano_tolerante(v):
     return texto in {"true", "1", "si", "sí", "yes", "y", "verdadero"}
 
 
+#: Cómo escriben los modelos "sin filtrar por tramo". `None` ya significa eso,
+#: pero al ver un parámetro opcional lo rellenan igual antes que omitirlo.
+_TRAMO_TODOS = {
+    "all", "todos", "todas", "todo", "any", "ninguno", "none", "null",
+    "total", "global", "n/a", "na", "-",
+}
+
+#: Sinónimos de cada tramo canónico. La familia del 90+ es la que más pide el
+#: chat ("¿cuánto a más de 90 días?") y la que más formas tiene de escribirse.
+_TRAMO_SINONIMOS = {
+    "90+": {"90", "+90", "90 mas", "90 más", "mas de 90", "más de 90", ">90", "90-", "90plus"},
+    "1-30": {"1 30", "0-30", "1 a 30", "30", "menos de 30"},
+    "31-60": {"31 60", "31 a 60", "60", "30-60"},
+    "61-90": {"61 90", "61 a 90", "90 dias", "60-90"},
+}
+
+
+def tramo_tolerante(v):
+    """Validador `before` del tramo de aging, con el mismo criterio que los de
+    arriba: acotar en vez de rechazar.
+
+    Hacía falta porque el error sí llegaba al usuario. El modelo pidió
+    `tramo='all'` y la respuesta del chat fue literalmente "ERROR: tramo 'all'
+    inválido", que es justo el volcado que estos validadores existen para
+    evitar. 'all' además no es un disparate: significa "no filtres", que es lo
+    que hace `None`.
+
+    Lo que no se reconoce también cae a `None`. No se pierde honestidad: el
+    resumen de la tool dice siempre sobre qué tramo se calculó, así que una
+    respuesta sobre la cartera completa se lee como tal.
+    """
+    if v is None:
+        return None
+    texto = str(v).strip().lower()
+    if not texto or texto in _TRAMO_TODOS:
+        return None
+    if texto in {"1-30", "31-60", "61-90", "90+"}:
+        return texto
+    for canonico, variantes in _TRAMO_SINONIMOS.items():
+        if texto in variantes:
+            return canonico
+    return None
+
+
 class ArgsConFechaCorte(BaseModel):
     """Base para toda tool que recibe una fecha de corte.
 
