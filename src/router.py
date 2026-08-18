@@ -23,7 +23,7 @@ import re
 
 from pydantic import BaseModel, Field
 
-from src.contracts import ResultadoTool
+from src.contracts import ResultadoTool, ahora
 from src.tools.registro import catalogo_texto, ejecutar
 from src.tools.registro import _ESPECS as ESPECS  # whitelist viva
 from src.voz import VOZ_ANALISTA, limpiar_relleno
@@ -123,7 +123,15 @@ def _limpiar_args(tool: str, args: dict, pregunta: str) -> dict:
     return limpios
 
 
-def clasificar_por_reglas(pregunta: str) -> Intencion:
+def clasificar_por_reglas(pregunta: str) -> Intencion | None:
+    """La tool que piden las palabras de la pregunta, o None si ninguna encaja.
+
+    Devuelve None a propósito. Antes caía a `resumen_facturacion` con confianza
+    0.2, y eso convertía "hola" y "¿cuál es la capital de Perú?" en un informe
+    de facturación presentado como si fuera la respuesta. Contestar otra cosa
+    con aplomo es peor que decir que no se entendió: quien pregunta no tiene
+    forma de saber que le respondieron a otra cosa.
+    """
     texto = pregunta.lower()
     mejor: tuple[str, dict] | None = None
     peso_max = 0
@@ -133,7 +141,7 @@ def clasificar_por_reglas(pregunta: str) -> Intencion:
             mejor, peso_max = (tool, dict(args)), peso
 
     if mejor is None:
-        return Intencion(tool="resumen_facturacion", args={}, confianza=0.2)
+        return None
 
     tool, args = mejor
     if (m := RE_RUC.search(pregunta)) and "ruc" in ESPECS[tool].args_schema.model_fields:
@@ -145,6 +153,99 @@ def clasificar_por_reglas(pregunta: str) -> Intencion:
 
 
 # --------------------------------------------------------------------------- #
+# Lo que no es una pregunta sobre los datos
+# --------------------------------------------------------------------------- #
+#
+# Un jurado lo primero que escribe es "hola", y hasta ahora eso devolvía la
+# escalera de facturación entera. No era un fallo del modelo -- el modelo
+# redactaba bien -- sino que el router estaba construido para aterrizar SIEMPRE
+# en una tool del catálogo, así que un saludo se resolvía como la pregunta más
+# cercana que hubiera.
+#
+# Esto se resuelve antes de tocar los datos y sin LLM. Es la misma razón de
+# siempre: un prompt es una petición y aquí hace falta una garantía. Además una
+# respuesta a "hola" que tarda dos segundos en llegar de Groq se lee peor que
+# una instantánea.
+
+#: Preguntas que se ofrecen cuando hay que sugerir algo. Las tres las resuelven
+#: las REGLAS de arriba, sin depender de que haya LLM: lo que se ofrece se
+#: puede cumplir siempre, también en modo seguro.
+PREGUNTAS_EJEMPLO: tuple[str, ...] = (
+    "¿Cuánto tenemos por cobrar a más de 90 días?",
+    "¿Qué cuentas activas no se están facturando?",
+    "¿A quién le cobro primero?",
+)
+
+#: Saludo a secas. Anclado a los dos extremos: "hola" es un saludo, pero
+#: "hola, ¿cuánto llevamos cobrado?" es una pregunta con saludo delante, y esa
+#: la contestan las reglas.
+RE_SALUDO = re.compile(
+    r"^[\s¡¿]*(hola|holi|buenas|buen(?:os|as)\s+(?:d[íi]as|tardes|noches)|hey|hi|"
+    r"hello|qu[ée]\s+tal|saludos)[\s!¡.,?¿]*$",
+    re.IGNORECASE,
+)
+
+#: Cierre de conversación: agradecimiento, conformidad o despedida.
+RE_CORTESIA = re.compile(
+    r"^[\s¡¿]*(?:(?:muchas|mil)\s+)?(gracias|ok|okey|okay|vale|perfecto|genial|"
+    r"entendido|listo|de acuerdo|ad[íi]os|chau|hasta luego|nos vemos|bye)"
+    r"[\s!¡.,?¿]*$",
+    re.IGNORECASE,
+)
+
+#: "¿Qué puedes hacer?" y sus variantes. Esta NO va anclada: la pregunta por
+#: las capacidades aparece dentro de frases más largas.
+RE_CAPACIDADES = re.compile(
+    r"(qu[ée]\s+(?:me\s+)?(?:puedes|sabes|haces)|"
+    r"qu[ée]\s+(?:te\s+)?puedo\s+(?:preguntar|pedir|consultar)|"
+    r"para\s+qu[ée]\s+sirves|qui[ée]n\s+eres|qu[ée]\s+eres|c[óo]mo\s+funcionas|"
+    r"^[\s¿¡]*(?:ayuda|help|men[úu])[\s!.?¿¡]*$)",
+    re.IGNORECASE,
+)
+
+
+def _lista_ejemplos() -> str:
+    return " ".join(f"«{p}»" for p in PREGUNTAS_EJEMPLO)
+
+
+def charla(pregunta: str) -> tuple[str, str] | None:
+    """Lo que se contesta sin tocar los datos. Devuelve (clase, texto) o None.
+
+    Sólo entra cuando ninguna regla de palabras clave reconoció la pregunta, así
+    que un saludo con pregunta detrás sigue yendo a su herramienta.
+    """
+    if clasificar_por_reglas(pregunta) is not None:
+        return None
+
+    if RE_SALUDO.search(pregunta):
+        return "saludo", (
+            "Buenas. Soy SON-IA: respondo sobre el ciclo del ingreso de "
+            "Integratel — facturación, cobranzas y recaudo — con las cifras del "
+            f"cierre, no con estimaciones. Prueba con {_lista_ejemplos()}."
+        )
+
+    if RE_CAPACIDADES.search(pregunta):
+        return "capacidades", (
+            "Contesto sobre tres bloques del ciclo: facturación (escalera del "
+            "mes, cuentas activas sin facturar, RUC no habidos), cobranzas y "
+            "recaudo (conciliación pago-factura, partidas sin aplicar, cartera "
+            "vencida por tramos) e inteligencia de negocio (ratio "
+            "cobrado/facturado, provisión de cobranza dudosa, prioridad de "
+            "recupero, proyección de caja y anomalías). Elijo la herramienta y "
+            "redacto, pero la cifra la calcula Python y queda registrada. "
+            f"Por ejemplo: {_lista_ejemplos()}."
+        )
+
+    if RE_CORTESIA.search(pregunta):
+        return "cortesia", (
+            "A la orden. Si quieres seguir tirando del hilo, "
+            f"prueba con {_lista_ejemplos()}."
+        )
+
+    return None
+
+
+# --------------------------------------------------------------------------- #
 # Clasificación asistida por LLM (con whitelist dura)
 # --------------------------------------------------------------------------- #
 
@@ -152,34 +253,100 @@ PROMPT_ROUTER = (
     "Eres un router de herramientas. Devuelves SOLO un JSON válido con esta forma exacta:\n"
     '{"tool": "<nombre exacto del catálogo>", "args": {}}\n'
     "Prohibido inventar nombres de herramientas y prohibido calcular cifras.\n"
-    "Si ninguna encaja, elige la más cercana del catálogo.\n\nCATÁLOGO:\n"
+    'Si la pregunta NO es sobre facturación, cobranzas, recaudo ni cartera, devuelve '
+    '{"tool": null}. Es una respuesta válida y preferible a forzar una herramienta que '
+    "no responde lo que se preguntó.\n"
+    "Si la pregunta continúa la anterior (\"¿y a 90 días?\", \"¿y ese cliente?\"), "
+    "resuélvela sobre el CONTEXTO que se te da.\n\nCATÁLOGO:\n"
 )
 
+#: Pregunta que se apoya en la anterior en vez de sostenerse sola: empieza por
+#: "y", o es tan corta que no puede llevar sujeto.
+RE_ELIPSIS = re.compile(r"^[\s¡¿]*y\b", re.IGNORECASE)
 
-def clasificar(pregunta: str, llm=None) -> Intencion:
-    """Clasifica la pregunta. El LLM propone; la whitelist dispone."""
+
+def _es_seguimiento(pregunta: str) -> bool:
+    return bool(RE_ELIPSIS.search(pregunta)) or len(pregunta.split()) <= 4
+
+
+def clasificar(pregunta: str, llm=None, contexto: dict | None = None) -> Intencion | None:
+    """Clasifica la pregunta. El LLM propone; la whitelist dispone.
+
+    `contexto` es el `{"pregunta": ..., "tool": ..., "args": {...}}` del turno
+    anterior. Sirve para lo que una conversación real hace todo el rato: "¿y a
+    90 días?" no dice sobre qué, y sin el turno anterior no hay forma de saberlo.
+
+    Devuelve None cuando no se reconoce la pregunta. Ese None es el que permite
+    contestar "no te he entendido" en vez de inventar una respuesta correcta a
+    otra pregunta.
+    """
+    previo = (contexto or {}).get("tool")
+    previo = previo if previo in ESPECS else None
     respaldo = clasificar_por_reglas(pregunta)
+
+    # Sin LLM, la elipsis se resuelve heredando la herramienta anterior. Es lo
+    # único honesto que se puede hacer con "¿y a 90 días?" sin un modelo, y
+    # sigue siendo mejor que responder otra cosa: la interfaz marca que es un
+    # seguimiento, así que se ve sobre qué se contestó.
     if llm is None:
+        if respaldo is None and previo and _es_seguimiento(pregunta):
+            return Intencion(tool=previo, args=_args_heredados(previo, contexto, pregunta),
+                             confianza=0.5, via="seguimiento")
         return respaldo
 
+    mensajes = [{"role": "system", "content": PROMPT_ROUTER + catalogo_texto()}]
+    if contexto and previo:
+        mensajes.append({
+            "role": "user",
+            "content": (
+                f"CONTEXTO (turno anterior): pregunta «{contexto.get('pregunta', '')}», "
+                f"herramienta {previo}, argumentos {json.dumps(contexto.get('args') or {})}"
+            ),
+        })
+    mensajes.append({"role": "user", "content": pregunta})
+
     try:
-        crudo = llm.call(
-            [
-                {"role": "system", "content": PROMPT_ROUTER + catalogo_texto()},
-                {"role": "user", "content": pregunta},
-            ]
-        )
+        crudo = llm.call(mensajes)
         bloque = re.search(r"\{.*\}", str(crudo), re.S)
-        if not bloque:
-            return respaldo
-        datos = json.loads(bloque.group(0))
-        tool = datos.get("tool")
-        if tool in ESPECS:  # whitelist: nada fuera del catálogo se ejecuta
-            args = _limpiar_args(tool, datos.get("args") or {}, pregunta)
-            return Intencion(tool=tool, args=args, confianza=0.9, via="llm")
+        if bloque:
+            datos = json.loads(bloque.group(0))
+            tool = datos.get("tool")
+            if tool in ESPECS:  # whitelist: nada fuera del catálogo se ejecuta
+                # Los permisos de argumento se miran contra las dos preguntas
+                # cuando esto es un seguimiento: en "¿y solo los críticos?" la
+                # palabra que da permiso está en el turno de antes.
+                fuente = pregunta
+                if previo and _es_seguimiento(pregunta):
+                    fuente = f"{contexto.get('pregunta', '')} {pregunta}"
+                args = _limpiar_args(tool, datos.get("args") or {}, fuente)
+                via = "seguimiento" if tool == previo and _es_seguimiento(pregunta) else "llm"
+                return Intencion(tool=tool, args=args, confianza=0.9, via=via)
+            # `null` es una respuesta legítima del router: la pregunta no es de
+            # este dominio. Solo se acepta si las reglas tampoco vieron nada.
+            if tool is None and respaldo is None:
+                return None
     except Exception:
         pass
+
+    if respaldo is None and previo and _es_seguimiento(pregunta):
+        return Intencion(tool=previo, args=_args_heredados(previo, contexto, pregunta),
+                         confianza=0.5, via="seguimiento")
     return respaldo
+
+
+def _args_heredados(tool: str, contexto: dict | None, pregunta: str) -> dict:
+    """Los argumentos del turno anterior, más lo que traiga el nuevo.
+
+    Se heredan solo los que la herramienta acepta: el turno anterior pudo usar
+    otra, y colar un argumento ajeno la haría fallar.
+    """
+    validos = set(ESPECS[tool].args_schema.model_fields)
+    args = {k: v for k, v in ((contexto or {}).get("args") or {}).items() if k in validos}
+    if (m := RE_RUC.search(pregunta)) and "ruc" in validos:
+        args["ruc"] = m.group(1)
+    if (m := RE_TRAMO.search(pregunta)) and "tramo" in validos:
+        args["tramo"] = m.group(1)
+    return args
 
 
 # --------------------------------------------------------------------------- #
@@ -312,10 +479,65 @@ PROMPT_REDACTOR = (
 )
 
 
-def responder(pregunta: str, llm=None) -> dict:
+def _sin_datos(texto: str, clase: str) -> dict:
+    """Respuesta que no ejecutó ninguna herramienta.
+
+    Mantiene la forma del resto para que la interfaz no necesite otro camino:
+    lo que cambia es que `tool` va vacía y `clase` dice por qué.
+    """
+    return {
+        "respuesta": texto,
+        "tool": "",
+        "args": {},
+        "via": "sin_tool",
+        "confianza": 0.0,
+        "clase": clase,
+        "sugerencias": list(PREGUNTAS_EJEMPLO),
+        "redactado_por_llm": False,
+        "redaccion_descartada": False,
+        "supuesto_ignorado": None,
+        "metricas": {},
+        "trazas": [],
+        "alertas": [],
+        "filas_detalle": 0,
+        "ok": True,
+        "ts": ahora(),
+    }
+
+
+def responder(pregunta: str, llm=None, contexto: dict | None = None) -> dict:
     """Responde una pregunta en lenguaje natural sin ceder el cálculo al LLM."""
-    intencion = clasificar(pregunta, llm)
+    # Saludo, cortesía o "¿qué sabes hacer?": se contesta y no se toca un dato.
+    if (social := charla(pregunta)) is not None:
+        clase, texto = social
+        return _sin_datos(texto, clase)
+
+    intencion = clasificar(pregunta, llm, contexto)
+
+    # Ni las reglas ni el modelo reconocieron la pregunta. Decirlo es la
+    # respuesta; elegir "la herramienta más cercana" era contestar con aplomo a
+    # una pregunta que nadie hizo.
+    if intencion is None:
+        return _sin_datos(
+            "No sé responder eso con los datos del cierre. Puedo con facturación, "
+            "cobranzas y recaudo: por ejemplo " + _lista_ejemplos() + ".",
+            "no_entendida",
+        )
+
     res = ejecutar(intencion.tool, origen=AGENTE, **intencion.args)
+
+    # La herramienta reventó. Su resumen en ese caso es "ERROR ejecutando
+    # <tool>: <excepción>", que es exactamente el volcado que el resto del chat
+    # se esfuerza en no enseñar.
+    if not res.ok:
+        salida = _sin_datos(
+            f"No pude calcular {ESPECS[intencion.tool].etiqueta.lower()}: la herramienta "
+            "falló con los datos cargados. Las demás siguen disponibles.",
+            "fallo_tool",
+        )
+        salida.update({"tool": intencion.tool, "args": intencion.args,
+                       "via": intencion.via, "ok": False, "ts": res.ts})
+        return salida
 
     texto = res.resumen
     redactado_por_llm = False
@@ -360,6 +582,8 @@ def responder(pregunta: str, llm=None) -> dict:
         "args": intencion.args,
         "via": intencion.via,
         "confianza": intencion.confianza,
+        "clase": None,
+        "sugerencias": [],
         "redactado_por_llm": redactado_por_llm,
         "redaccion_descartada": descartada,
         "supuesto_ignorado": supuesto,

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { postChat } from "../lib/api";
 import { TITULOS, destacadosDe } from "../lib/destacados";
 import { hora, num } from "../lib/format";
-import type { RespuestaChat } from "../lib/types";
+import type { ContextoChat, RespuestaChat } from "../lib/types";
 
 /**
  * Consulta en lenguaje natural.
@@ -50,6 +50,11 @@ export function Chat({ modoSeguro }: { modoSeguro: boolean }) {
   const fin = useRef<HTMLDivElement>(null);
   const campo = useRef<HTMLInputElement>(null);
 
+  // El último turno que sí ejecutó una herramienta. Es lo que se manda como
+  // contexto para que "¿y a 90 días?" sepa de qué está hablando. Se guarda en
+  // una ref y no en el estado porque no se pinta: cambiarlo no debe repintar.
+  const contexto = useRef<ContextoChat | undefined>(undefined);
+
   useEffect(() => {
     campo.current?.focus();
   }, []);
@@ -68,12 +73,24 @@ export function Chat({ modoSeguro }: { modoSeguro: boolean }) {
     const actualizar = (cambio: Partial<Turno>) =>
       setTurnos((t) => t.map((x) => (x.id === id ? { ...x, ...cambio } : x)));
 
+    // Un saludo o un "no te entendí" no son contexto de nada: si se guardaran,
+    // la siguiente pregunta elíptica se apoyaría en un turno que no consultó
+    // ningún dato.
+    const recordar = (r: RespuestaChat) => {
+      if (r.tool) contexto.current = { pregunta: limpio, tool: r.tool, args: r.args };
+    };
+
     try {
       if (!modoSeguro) {
         const control = new AbortController();
         const reloj = window.setTimeout(() => control.abort(), ESPERA_LLM_MS);
         try {
-          actualizar({ respuesta: await postChat({ mensaje: limpio }, control.signal) });
+          const r = await postChat(
+            { mensaje: limpio, contexto: contexto.current },
+            control.signal,
+          );
+          actualizar({ respuesta: r });
+          recordar(r);
           return;
         } catch {
           /* abajo se repite sin LLM */
@@ -81,8 +98,13 @@ export function Chat({ modoSeguro }: { modoSeguro: boolean }) {
           window.clearTimeout(reloj);
         }
       }
-      const respuesta = await postChat({ mensaje: limpio, usar_llm: false });
+      const respuesta = await postChat({
+        mensaje: limpio,
+        usar_llm: false,
+        contexto: contexto.current,
+      });
       actualizar({ respuesta, sinLlm: !modoSeguro });
+      recordar(respuesta);
     } catch (e) {
       actualizar({ error: e instanceof Error ? e.message : "No se pudo consultar." });
     } finally {
@@ -143,7 +165,7 @@ export function Chat({ modoSeguro }: { modoSeguro: boolean }) {
             )}
             <div className="space-y-5">
               {turnos.map((t) => (
-                <TurnoChat key={t.id} turno={t} />
+                <TurnoChat key={t.id} turno={t} onSugerencia={preguntar} />
               ))}
             </div>
             <div ref={fin} className="h-2" />
@@ -219,15 +241,32 @@ function Sugerida({
 
 // --------------------------------------------------------------------------
 
-function TurnoChat({ turno }: { turno: Turno }) {
+function TurnoChat({
+  turno,
+  onSugerencia,
+}: {
+  turno: Turno;
+  onSugerencia: (pregunta: string) => void;
+}) {
   const [verTrazas, setVerTrazas] = useState(false);
   const r = turno.respuesta;
-  const cifras = r ? destacadosDe(r.tool, r.metricas) : [];
-  const separado = separarTitular(r?.respuesta ?? "");
+  const cifras = r && r.tool ? destacadosDe(r.tool, r.metricas) : [];
+  // Sin herramienta no hay titular que separar: el texto es una frase, no el
+  // resumen con rótulo en mayúsculas que devuelven las tools.
+  const separado = r?.tool ? separarTitular(r.respuesta) : { titulo: "", cuerpo: r?.respuesta ?? "" };
   // Si redactó el LLM no hay titular dentro del texto: se repone el de la
   // herramienta para que todas las respuestas tengan la misma forma.
-  const titulo = separado.titulo || (r ? (TITULOS[r.tool] ?? "") : "");
+  const titulo = separado.titulo || (r?.tool ? (TITULOS[r.tool] ?? "") : "");
   const cuerpo = separado.cuerpo;
+  // Cuando no se consultó nada, el filete no puede ir del color de un dato.
+  // Ámbar para lo que el sistema no supo resolver; apagado para la charla.
+  const sinDatos = Boolean(r && !r.tool);
+  const filete =
+    r?.clase === "no_entendida" || r?.clase === "fallo_tool"
+      ? "var(--color-cobre)"
+      : sinDatos
+        ? "var(--filete-fuerte)"
+        : "var(--color-rampa-4)";
 
   return (
     <div className="anim-entra">
@@ -251,7 +290,7 @@ function TurnoChat({ turno }: { turno: Turno }) {
       )}
 
       {r && (
-        <div className="mt-2.5 border-l-2 border-[var(--color-rampa-4)] pl-4">
+        <div className="mt-2.5 border-l-2 pl-4" style={{ borderLeftColor: filete }}>
           {titulo && (
             <h3 className="text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--color-rampa-2)]">
               {titulo}
@@ -284,6 +323,23 @@ function TurnoChat({ turno }: { turno: Turno }) {
           <p className="mt-2.5 max-w-[68ch] text-[12.5px] leading-relaxed text-[var(--color-tinta-2)]">
             {cuerpo}
           </p>
+
+          {/* Cuando no hubo herramienta, lo útil no es explicar el hueco: es
+              dejar el siguiente paso a un clic. */}
+          {sinDatos && (r.sugerencias ?? []).length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(r.sugerencias ?? []).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => onSugerencia(s)}
+                  className="border px-2.5 py-1 text-left text-[11.5px] text-[var(--color-tinta-2)] transition-colors duration-200 hover:bg-[var(--color-superficie-2)] hover:text-[var(--color-tinta)]"
+                  style={{ borderColor: "var(--filete)" }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* El argumento entero del proyecto cabe en estos bloques, así que no
               pueden ir al mismo peso que "15 filas". */}
@@ -381,9 +437,28 @@ function Procedencia({ r, sinLlm }: { r: RespuestaChat; sinLlm?: boolean }) {
     </span>
   );
 
+  // Sin herramienta no hay procedencia que enseñar. Poner ahí "0 filas" o el
+  // chip de una tool vacía sería inventarle respaldo a un saludo.
+  if (!r.tool) {
+    return (
+      <span className="text-[10px] text-[var(--color-tinta-3)]">
+        {r.clase === "no_entendida"
+          ? "no se consultó ningún dato"
+          : r.clase === "fallo_tool"
+            ? "la herramienta no devolvió resultado"
+            : "sin consultar datos"}
+      </span>
+    );
+  }
+
   return (
     <span className="flex flex-wrap items-center gap-2">
       {chip(r.tool, "var(--color-tinta-3)")}
+      {r.via === "seguimiento" && (
+        <span className="text-[10px] text-[var(--color-tinta-3)]">
+          sigue la pregunta anterior
+        </span>
+      )}
       {r.filas_detalle > 0 &&
         chip(`${num(r.filas_detalle)} filas`, "var(--color-tinta-3)")}
       {/* El caso de redacción descartada ya lo cuenta su propio bloque. */}

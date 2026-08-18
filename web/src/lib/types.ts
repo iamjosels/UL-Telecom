@@ -249,14 +249,35 @@ export type EventoRun =
 export interface PeticionChat {
   mensaje: string;
   usar_llm?: boolean;
+  /** Turno anterior, para resolver preguntas que se apoyan en él ("¿y a 90 días?"). */
+  contexto?: ContextoChat;
 }
+
+export interface ContextoChat {
+  pregunta: string;
+  tool: string;
+  args: Record<string, unknown>;
+}
+
+/** Por qué se acabó respondiendo sin ejecutar ninguna herramienta. */
+export type ClaseChat =
+  | "saludo"
+  | "capacidades"
+  | "cortesia"
+  | "no_entendida"
+  | "fallo_tool";
 
 export interface RespuestaChat {
   respuesta: string;
+  /** Cadena vacía cuando no se ejecutó ninguna herramienta. */
   tool: string;
   args: Record<string, unknown>;
-  via: "keywords" | "llm";
+  via: "keywords" | "llm" | "seguimiento" | "sin_tool";
   confianza: number;
+  /** Null en una respuesta normal con datos. */
+  clase?: ClaseChat | null;
+  /** Preguntas que sí se saben responder, para ofrecerlas cuando no hubo tool. */
+  sugerencias?: string[];
   /** true solo si el LLM redactó Y pasó el guardarraíl numérico. */
   redactado_por_llm: boolean;
   /** true cuando el guardarraíl rechazó la redacción por citar una cifra que

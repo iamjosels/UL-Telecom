@@ -60,7 +60,7 @@ from src.data_loader import (  # noqa: E402
 from src.plan import OBJETIVO_DEMO, PLAN_DE_CIERRE  # noqa: E402
 from src.proveedor import clave_groq, motivo_humano  # noqa: E402 — ligero, sin CrewAI
 from src.reporte import kpis_dashboard  # noqa: E402
-from src.router import responder  # noqa: E402
+from src.router import charla, responder  # noqa: E402
 from src.tools import registro  # noqa: E402
 
 _LOG = logging.getLogger("sonia.api")
@@ -105,6 +105,13 @@ class PeticionRun(BaseModel):
 class PeticionChat(BaseModel):
     mensaje: str = Field(..., description="Pregunta en lenguaje natural.")
     usar_llm: bool = Field(True, description="Dejar que el LLM redacte la respuesta.")
+    contexto: dict | None = Field(
+        None,
+        description=(
+            "Turno anterior: {pregunta, tool, args}. Permite resolver preguntas "
+            "que se apoyan en la de antes ('¿y a 90 días?')."
+        ),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -352,6 +359,13 @@ def datos_restaurar() -> dict:
 @app.post("/chat")
 def chat(peticion: PeticionChat) -> dict:
     """Pregunta en lenguaje natural. El LLM elige la tool y redacta; nunca calcula."""
+    # Un saludo o un "¿qué puedes hacer?" se contestan sin modelo, así que no
+    # hay por qué construirlo: `src.agents` arrastra CrewAI y son diecinueve
+    # segundos la primera vez. Justo lo que peor se ve, porque es lo primero
+    # que la gente escribe.
+    if charla(peticion.mensaje) is not None:
+        return responder(peticion.mensaje)
+
     llm = None
     if peticion.usar_llm and clave_groq():
         try:
@@ -367,7 +381,7 @@ def chat(peticion: PeticionChat) -> dict:
                 llm = llm_chat()
         except Exception:
             llm = None
-    return responder(peticion.mensaje, llm=llm)
+    return responder(peticion.mensaje, llm=llm, contexto=peticion.contexto)
 
 
 # --------------------------------------------------------------------------- #

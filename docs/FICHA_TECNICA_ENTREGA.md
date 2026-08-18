@@ -67,11 +67,11 @@ a temperatura `0.1`.
 
 | Agente (función) | `role` exacto | Modelo | Parámetros |
 |---|---|---|---|
-| `agente_facturacion()` | Especialista en Aseguramiento de Ingresos y Facturación B2B | `llama-3.3-70b-versatile` (`SONIA_MODELO_RAPIDO`) | `max_tokens=700`, `max_iter=4`, `max_rpm=12`, `allow_delegation=False` |
-| `agente_cobranzas()` | Analista de Cobranzas y Recaudo B2B | `llama-3.3-70b-versatile` (`SONIA_MODELO_RAPIDO`) | `max_tokens=700`, `max_iter=4`, `max_rpm=12`, `allow_delegation=False` |
-| `agente_bi()` | Analista de Inteligencia de Negocio del Ciclo de Ingresos | `llama-3.3-70b-versatile` (`SONIA_MODELO_POTENTE`) | `max_tokens=1000`, `max_iter=6`, `max_rpm=8`, `allow_delegation=False` |
-| `agente_supervisor()` | Supervisor del Ciclo de Ingresos B2B (SON-IA) | `llama-3.3-70b-versatile` (`SONIA_MODELO_POTENTE`) | `max_tokens=1000`, `max_iter=6`, `max_rpm=8`, `allow_delegation=True`, **`tools=[]`** |
-| *(chat, no es Agent)* | `llm_chat()` usado por `src/router.py` | `llama-3.1-8b-instant` (`SONIA_MODELO_CHAT`) | `max_tokens=500` |
+| `agente_facturacion()` | Especialista en Aseguramiento de Ingresos y Facturación B2B | `openai/gpt-oss-20b` (`SONIA_MODELO_RAPIDO`) | `max_tokens=700`, `max_iter=4`, `max_rpm=12`, `allow_delegation=False` |
+| `agente_cobranzas()` | Analista de Cobranzas y Recaudo B2B | `openai/gpt-oss-20b` (`SONIA_MODELO_RAPIDO`) | `max_tokens=700`, `max_iter=4`, `max_rpm=12`, `allow_delegation=False` |
+| `agente_bi()` | Analista de Inteligencia de Negocio del Ciclo de Ingresos | `openai/gpt-oss-120b` (`SONIA_MODELO_POTENTE`) | `max_tokens=1000`, `max_iter=6`, `max_rpm=8`, `allow_delegation=False` |
+| `agente_supervisor()` | Supervisor del Ciclo de Ingresos B2B (SON-IA) | `openai/gpt-oss-120b` (`SONIA_MODELO_POTENTE`) | `max_tokens=1000`, `max_iter=6`, `max_rpm=8`, `allow_delegation=True`, **`tools=[]`** |
+| *(chat, no es Agent)* | `llm_chat()` usado por `src/router.py` | `openai/gpt-oss-20b` (`SONIA_MODELO_CHAT`) | `max_tokens=500`, `reasoning_effort=low` |
 
 **Goals (resumidos, literal del código):**
 
@@ -95,12 +95,23 @@ Los tres goals operadores terminan con la misma cláusula repetida a propósito
 (`_REGLA_CIFRAS`): *"NUNCA calcules, estimes ni redondees cifras por tu cuenta… cítalas
 EXACTAMENTE como te las devuelven"*.
 
-**Por qué los cuatro van al modelo grande** (documentado en el propio módulo): en el plan
-gratuito de Groq el techo de tokens por minuto es **por modelo** — `llama-3.1-8b-instant`
-6.000 TPM contra `llama-3.3-70b-versatile` 12.000 TPM. Cada turno de un agente reenvía todo
-su bloc de notas (~2.200 tokens/petición), así que poner los agentes "ligeros" en el modelo
-pequeño mataba la corrida a mitad del cierre. El chat sí usa el 8b, y a propósito: su bolsa
-de TPM es independiente y sigue intacta justo después de un cierre.
+**Por qué se reparten entre dos modelos** (documentado en el propio módulo): en el plan
+gratuito de Groq el techo de tokens por minuto es **por modelo**, 8.000 TPM en cada gpt-oss.
+Repartir no es un lujo, son dos bolsas de cuota en lugar de una: el `120b` lleva a quien
+razona (supervisor y BI) y el `20b` a los dos especialistas y al chat. Cada turno de un
+agente reenvía todo su bloc de notas (~2.200 tokens/petición) y los gpt-oss suman encima sus
+tokens de razonamiento, así que la bolsa del `120b` se agota antes de cerrar los once pasos
+y la corrida acaba en modo híbrido. Eso no es un fallo: es el escenario que la red de
+seguridad existe para cubrir.
+
+**El chat va con `reasoning_effort=low`, los agentes no.** El razonamiento se descuenta del
+mismo `max_tokens` que la respuesta, así que un modelo que piensa de más se queda sin
+presupuesto y devuelve `content` vacío — que es como CrewAI y el router ven "no hubo
+respuesta". El chat hace dos llamadas por pregunta y las dos son de transcribir (elegir de un
+catálogo cerrado y redactar sin añadir cifras), así que ahí el razonamiento no compra nada y
+cuesta el triple de tokens: medido con el mismo prompt, 395 tokens de salida contra 114. En
+los agentes del cierre sí se paga, porque ahí el modelo decide qué herramienta usar y en qué
+orden.
 
 `LLMGroq` (subclase de `crewai.LLM`) parchea dos incompatibilidades reales:
 1. CrewAI 1.15 marca los mensajes con `cache_breakpoint` y define `strip_cache_breakpoint()`
@@ -256,7 +267,7 @@ Definidos en `api/main.py`. **13 rutas.** (El README lista 7; esta es la lista c
 | GET | `/datos/estado` | Qué dataset está cargado, con qué corte y de dónde sale el corte |
 | POST | `/datos/cargar` | Sube los 6 CSV (multipart, clave = nombre de tabla) + `fecha_corte` opcional. Valida en carpeta aparte y solo cambia el origen si valida. 422 con el detalle **por archivo** si falla |
 | POST | `/datos/restaurar` | Vuelve al dataset del repositorio |
-| POST | `/chat` | `{mensaje, usar_llm}` → respuesta, tool elegida, args, vía, confianza, `redactado_por_llm`, `redaccion_descartada`, `supuesto_ignorado`, métricas, trazas, alertas |
+| POST | `/chat` | `{mensaje, usar_llm, contexto}` → respuesta, tool elegida (vacía si no se consultó nada), args, vía (`keywords`/`llm`/`seguimiento`/`sin_tool`), confianza, `clase`, `sugerencias`, `redactado_por_llm`, `redaccion_descartada`, `supuesto_ignorado`, métricas, trazas, alertas |
 | **POST** | **`/run`** | **SSE.** Corre el cierre y transmite cada paso. `{objetivo, fecha_corte, deterministico}` |
 | POST | `/run/detener` | Marca la bandera de cancelación. Responde `detenido: true` — aceptado, no consumado |
 
@@ -321,14 +332,32 @@ anunciarlo como "el crew falló" sería falso.
 
 ### 1.8 El guardarraíl del chat
 
-Tres etapas separadas a propósito (`src/router.py`):
+Cuatro etapas separadas a propósito (`src/router.py`):
 
+0. **¿ES UNA PREGUNTA SOBRE LOS DATOS?** Un saludo, un "gracias" o un "¿qué puedes hacer?"
+   se contestan sin ejecutar nada, con `charla()`, y sin llamar al modelo. La comprobación va
+   **después** de las reglas de palabras clave, no antes: *«hola, ¿cuánto tenemos por
+   cobrar?»* es una pregunta con un saludo delante, y esa sí consulta.
 1. **CLASIFICAR.** El LLM propone `{"tool": "...", "args": {}}` sobre un catálogo cerrado.
    La **whitelist es `_ESPECS`, el registro vivo de tools**: `if tool in ESPECS`. Cualquier
    nombre inventado se descarta y cae a `clasificar_por_reglas()`, 12 reglas de palabras clave
-   con pesos que funcionan **sin API key**.
+   con pesos que funcionan **sin API key**. El router puede además devolver `{"tool": null}`
+   para lo que no es de este dominio.
 2. **EJECUTAR.** Python corre la tool y produce las cifras.
 3. **REDACTAR.** El LLM solo pone en prosa el resumen que ya trae los números.
+
+**Cuando no se reconoce la pregunta, se dice.** `clasificar_por_reglas()` devuelve `None` en
+vez de caer a `resumen_facturacion` con confianza 0.2, que es lo que hacía antes: *«hola»* y
+*«¿cuál es la capital de Perú?»* recibían la escalera de facturación entera presentada como si
+fuera la respuesta. Contestar otra cosa con aplomo es peor que no contestar, porque quien
+pregunta no tiene forma de notarlo.
+
+**Preguntas que se apoyan en la anterior.** *«¿y el tramo 31-60?»* no dice sobre qué. El
+tablero manda el turno previo (`{pregunta, tool, args}`) y el router hereda esa herramienta,
+pisando solo los argumentos que trae la pregunta nueva. Los argumentos heredados se filtran
+contra el esquema de la tool: el turno anterior pudo usar otra, y colar un argumento ajeno la
+haría fallar. La interfaz marca *«sigue la pregunta anterior»* — un seguimiento que no se ve
+es indistinguible de una respuesta a otra cosa.
 
 Además de las tres etapas hay **tres filtros**, y cada uno existe por un fallo observado:
 
@@ -568,8 +597,8 @@ SVG escrito a mano en `web/src/charts/`. No hay Recharts, D3 ni Chart.js.
   healthcheck `/api/`, `GROQ_API_KEY` con `sync: false` para que Render la pida al desplegar
   y no quede escrita en el repositorio).
 
-**Proveedor de LLM: Groq** (vía LiteLLM, dentro de CrewAI). Modelos `llama-3.3-70b-versatile`
-y `llama-3.1-8b-instant`. **[NO EXISTE] No hay fine-tuning, ni embeddings, ni RAG, ni base
+**Proveedor de LLM: Groq** (vía LiteLLM, dentro de CrewAI). Modelos `openai/gpt-oss-120b`
+y `openai/gpt-oss-20b`. **[NO EXISTE] No hay fine-tuning, ni embeddings, ni RAG, ni base
 vectorial** — `memory=False` en el Crew justamente para no arrastrar Chroma y sus llamadas de
 red en el import.
 
@@ -674,6 +703,12 @@ identificados · conciliación 97.9% · cartera vencida S/18,298 · cartera 90+ 
 Corrida `20260814_004559_2405a1`, con `SONIA_PROCESO=supervisado` y ambos modelos de agente
 en `llama-3.3-70b-versatile`. **Terminó en modo `hibrido` en 129.5 s, con 11 de 11
 herramientas ejecutadas y 0 errores.** La secuencia real, leída del log de auditoría:
+
+> Esta medición es del 14 de agosto y se deja tal cual, con el modelo que corrió entonces.
+> Groq retiró los `llama-3.x` del catálogo el 17 de agosto y el sistema pasó a los `gpt-oss`;
+> el reparto de modelos cambió, y las duraciones también (de 65 s a 191 s según lo que se
+> haya gastado del minuto anterior). Lo que no cambió es el desenlace, que es lo que esta
+> sección demuestra: 11 de 11 tools y cifras idénticas a la corrida determinista.
 
 1. Los agentes de **Facturación** (3 tools) y **Cobranzas** (3 tools) completaron sus bloques
    con el LLM decidiendo las llamadas: 7 de las 11 tools se ejecutaron por decisión de un
